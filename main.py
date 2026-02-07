@@ -91,7 +91,7 @@ def scan(
     min_size: Optional[int] = typer.Option(None, "--min-size", help="Min file size in bytes"),
     max_size: Optional[int] = typer.Option(None, "--max-size", help="Max file size in bytes"),
     unique: str = typer.Option("namepattern", "--unique", help="Deduplicate by 'hash' or 'namepattern'"),
-    output_format: str = typer.Option("jsonl", "--output-format", help="Output format: 'jsonl' or 'csv'"),
+    output_format: str = typer.Option("csv", "--output-format", help="Output format: 'csv' or 'jsonl'"),
     output_folder: str = typer.Option("~", "-o", help="Output folder (default: ~)"),
     workers: int = typer.Option(4, "--workers", "-w", help="Parallel threads (default: 4)"),
     verbose: bool = typer.Option(False, "--verbose", "-v", help="Show scan progress details"),

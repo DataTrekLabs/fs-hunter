@@ -72,7 +72,7 @@ def extract_metadata(file_path: Path, base_dir: Path) -> FileMetadata:
 
     return FileMetadata(
         name=file_path.name,
-        extension="".join(file_path.suffixes),
+        extension=file_path.suffix,
         full_path=str(file_path.resolve()),
         relative_path=str(file_path.relative_to(base_dir)),
         size_bytes=file_stat.st_size,
