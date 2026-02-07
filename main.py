@@ -89,7 +89,7 @@ def scan(
     unique: str = typer.Option("namepattern", "--unique", help="Deduplicate by 'hash' or 'namepattern'"),
     output_format: str = typer.Option("jsonl", "--output-format", help="Output format: 'jsonl' or 'csv'"),
     output_folder: str = typer.Option("~", "-o", help="Output folder (default: ~)"),
-    workers: int = typer.Option(4, "--workers", help="Parallel threads (default: 4)"),
+    workers: int = typer.Option(4, "--workers", "-w", help="Parallel threads (default: 4)"),
     verbose: bool = typer.Option(False, "--verbose", "-v", help="Show scan progress details"),
 ):
     """Scan directories and extract file metadata with filters."""
