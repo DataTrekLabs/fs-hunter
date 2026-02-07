@@ -51,6 +51,7 @@ def _expand_dir(
     expanded: list[tuple[str, Path, bool]],
     depth: int,
     max_depth: int,
+    dir_cutoff: float | None = None,
 ) -> None:
     """Recursively split a directory into scan units for parallelism.
 
@@ -58,6 +59,7 @@ def _expand_dir(
     - Adds a non-recursive entry for files directly in this directory
     - If depth < max_depth, recurses into child directories that themselves
       contain subdirectories; leaf directories are added as recursive entries
+    - Skips child directories whose mtime is older than dir_cutoff
     """
     # Direct files at this level (non-recursive scan)
     expanded.append((str(directory), base_dir, False))
@@ -70,6 +72,10 @@ def _expand_dir(
     child_dirs = [c for c in children if c.is_dir()]
 
     for child in child_dirs:
+        # Skip old directories early — don't even queue them
+        if dir_cutoff is not None and _dir_mtime(str(child)) < dir_cutoff:
+            continue
+
         if depth < max_depth:
             # Check if child has any subdirectories worth splitting further
             try:
@@ -78,7 +84,7 @@ def _expand_dir(
                 has_subdirs = False
 
             if has_subdirs:
-                _expand_dir(child, base_dir, expanded, depth + 1, max_depth)
+                _expand_dir(child, base_dir, expanded, depth + 1, max_depth, dir_cutoff)
             else:
                 # Leaf directory — scan recursively as a single unit
                 expanded.append((str(child), base_dir, True))
@@ -87,11 +93,14 @@ def _expand_dir(
             expanded.append((str(child), base_dir, True))
 
 
-def _expand_targets(targets: list[str], workers: int) -> list[tuple[str, Path, bool]]:
+def _expand_targets(
+    targets: list[str], workers: int, dir_cutoff: float | None = None,
+) -> list[tuple[str, Path, bool]]:
     """Expand targets into (scan_path, base_dir, recursive) tuples.
 
     When workers > 1, splits each target up to 2 levels deep so large
     subdirectories don't bottleneck a single thread.
+    Skips directories older than dir_cutoff during expansion.
     """
     if workers <= 1:
         return [(t, Path(t).resolve(), True) for t in targets]
@@ -102,7 +111,7 @@ def _expand_targets(targets: list[str], workers: int) -> list[tuple[str, Path, b
         if not base_dir.is_dir():
             expanded.append((target, base_dir, True))
             continue
-        _expand_dir(base_dir, base_dir, expanded, depth=0, max_depth=2)
+        _expand_dir(base_dir, base_dir, expanded, depth=0, max_depth=2, dir_cutoff=dir_cutoff)
     return expanded
 
 
@@ -251,7 +260,7 @@ def scan_directories(
     verbose=True: Rich progress bars per scan unit
     """
     name_regex = re.compile(name_pattern) if name_pattern else None
-    expanded = _expand_targets(targets, workers)
+    expanded = _expand_targets(targets, workers, dir_cutoff)
 
     if not verbose:
         if workers <= 1:
