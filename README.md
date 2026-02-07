@@ -5,7 +5,7 @@ A Python CLI tool for scanning directories, extracting extended file metadata, a
 ## Features
 
 - **Extended metadata extraction** — name, extension, size, created/modified dates, permissions, owner, MIME type, SHA256 checksum
-- **Smart filtering** — date ranges, time-of-day windows, file size, regex on filenames, glob on paths, deduplication
+- **Smart filtering** — lookback duration, date ranges, time-of-day windows, file size, regex on filenames, glob on paths, deduplication
 - **4 input modes** — single path, multiple paths, path list file, or delta CSV
 - **Delta CSV enrichment** — map scanned files back to dataset/table metadata from a CSV manifest
 - **Multi-threaded scanning** — parallel directory walks with configurable worker count
@@ -21,8 +21,8 @@ cd fs-hunter
 
 # Create and activate virtual environment
 python -m venv venv
-venv\Scripts\activate      # Windows
 source venv/bin/activate   # Linux/macOS
+venv\Scripts\activate      # Windows
 
 # Install dependencies
 pip install -r requirements.txt
@@ -34,6 +34,19 @@ pip install -r requirements.txt
 - `rich` — terminal formatting and progress bars
 - `pandas` — DataFrame operations and CSV/JSONL output
 
+## Quick Start
+
+```bash
+# Scan /data for parquet files modified in the last hour (all defaults)
+python main.py --base-path /data
+
+# Scan with 7-day lookback
+python main.py --base-path /data --lookback 7D
+
+# Scan with verbose progress and CSV output
+python main.py --base-path /data --lookback 1D -v --output-format csv
+```
+
 ## Usage
 
 ```bash
@@ -42,21 +55,46 @@ python main.py [OPTIONS]
 
 You must provide exactly one input mode: `--base-path`, `--paths`, `--path-list`, or `--delta-csv`.
 
-### Input Modes
+## CLI Reference
 
-#### Single directory
+| Flag | Short | Default | Description |
+|---|---|---|---|
+| `--base-path` | | | Single directory to scan |
+| `--paths` | | | Multiple directories (repeat flag) |
+| `--path-list` | | | Text file with paths (one per line) |
+| `--delta-csv` | | | CSV manifest with Directory column |
+| `--lookback` | | `1H` | Relative duration: `7D`, `2H`, `1D12H30M` |
+| `--scan-start` | | | Absolute date range start (overrides lookback) |
+| `--scan-end` | | | Absolute date range end (overrides lookback) |
+| `--day-start` | | `00:00:00` | Time-of-day filter start |
+| `--day-end` | | `23:59:59` | Time-of-day filter end |
+| `--file-pattern` | | `.*\.parq(uet)?$` | Regex matched on filename |
+| `--path-pattern` | | | Glob matched on relative path |
+| `--min-size` | | | Minimum file size in bytes |
+| `--max-size` | | | Maximum file size in bytes |
+| `--unique` | | `namepattern` | Dedup mode: `hash` or `namepattern` |
+| `--output-format` | | `jsonl` | Output format: `jsonl` or `csv` |
+| | `-o` | `~` | Output folder |
+| `--workers` | `-w` | `4` | Parallel scan threads |
+| `--verbose` | `-v` | `false` | Show Rich progress bars |
+
+## Input Modes
+
+Exactly one must be provided. They are mutually exclusive.
+
+### Single directory (`--base-path`)
 
 ```bash
 python main.py --base-path /data/warehouse
 ```
 
-#### Multiple directories
+### Multiple directories (`--paths`)
 
 ```bash
 python main.py --paths /data/raw --paths /data/derived --paths /data/archive
 ```
 
-#### Path list file
+### Path list file (`--path-list`)
 
 ```bash
 python main.py --path-list paths.txt
@@ -70,7 +108,7 @@ Where `paths.txt` contains one directory per line:
 /data/archive
 ```
 
-#### Delta CSV
+### Delta CSV (`--delta-csv`)
 
 ```bash
 python main.py --delta-csv manifest.csv
@@ -78,11 +116,35 @@ python main.py --delta-csv manifest.csv
 
 The CSV must contain these columns: `Directory`, `Dataset Repo`, `SF Table`, `Filename`. The tool extracts unique directories for scanning and enriches output with the dataset/table metadata.
 
-### Date and Time Filters
+## Date and Time Filters
 
-#### Date range (`--scan-start`, `--scan-end`)
+### Lookback duration (`--lookback`)
 
-Filter files by last modified date. Supports partial dates with smart auto-complete:
+The **default** date filter. Scans files modified within the given duration from now.
+
+```bash
+# Last hour (default)
+python main.py --base-path /data
+
+# Last 7 days
+python main.py --base-path /data --lookback 7D
+
+# Last 2 hours
+python main.py --base-path /data --lookback 2H
+
+# Last 1 day, 12 hours, 30 minutes
+python main.py --base-path /data --lookback 1D12H30M
+```
+
+**Supported units:** `D` (days), `H` (hours), `M` (minutes). Can be combined: `1D12H30M`.
+
+**Default:** `1H` (last 1 hour).
+
+### Date range (`--scan-start`, `--scan-end`)
+
+Absolute date range filter. When either `--scan-start` or `--scan-end` is provided, it **overrides** `--lookback`.
+
+Supports partial dates with smart auto-complete:
 
 | Input | Interpreted as |
 |---|---|
@@ -93,19 +155,22 @@ Filter files by last modified date. Supports partial dates with smart auto-compl
 | `2024-06-15 14:30` | `2024-06-15 14:30:00` |
 | `2024-06-15 14:30:45` | `2024-06-15 14:30:45` |
 
-**Defaults:** `--scan-start` = yesterday 00:00:00, `--scan-end` = now.
+When using date range mode: `--scan-start` defaults to yesterday 00:00:00, `--scan-end` defaults to now.
 
 ```bash
 # Files modified in 2024
 python main.py --base-path /data --scan-start 2024 --scan-end 2025
 
-# Files modified in the last week
+# Files modified since a specific date
+python main.py --base-path /data --scan-start "2026-02-01"
+
+# Files modified in a specific window
 python main.py --base-path /data --scan-start "2026-02-01" --scan-end "2026-02-07 23:59:59"
 ```
 
-#### Time-of-day window (`--day-start`, `--day-end`)
+### Time-of-day window (`--day-start`, `--day-end`)
 
-Filter by time-of-day regardless of date. Supports midnight wrapping.
+Filter by time-of-day regardless of date. Works alongside both lookback and date range. Supports midnight wrapping.
 
 ```bash
 # Files modified during business hours only
@@ -115,11 +180,13 @@ python main.py --base-path /data --day-start 09:00 --day-end 17:00
 python main.py --base-path /data --day-start 22:00 --day-end 06:00
 ```
 
+Supports partial time input: `14` becomes `14:00:00`, `14:30` becomes `14:30:00`.
+
 **Defaults:** `--day-start` = `00:00:00`, `--day-end` = `23:59:59` (all times).
 
-### File Filters
+## File Filters
 
-#### Filename regex (`--file-pattern`)
+### Filename regex (`--file-pattern`)
 
 Regex pattern matched against the filename.
 
@@ -136,7 +203,7 @@ python main.py --base-path /data --file-pattern "^report_"
 
 **Default:** `.*\.parq(uet)?$` (parquet files).
 
-#### Path glob (`--path-pattern`)
+### Path glob (`--path-pattern`)
 
 Glob pattern matched against the file's relative path from the scan root.
 
@@ -148,7 +215,7 @@ python main.py --base-path /data --path-pattern "derived/*"
 python main.py --base-path /data --path-pattern "*/daily/*.parq"
 ```
 
-#### File size (`--min-size`, `--max-size`)
+### File size (`--min-size`, `--max-size`)
 
 Filter by file size in bytes.
 
@@ -160,7 +227,7 @@ python main.py --base-path /data --min-size 1048576
 python main.py --base-path /data --min-size 1024 --max-size 104857600
 ```
 
-### Deduplication (`--unique`)
+## Deduplication (`--unique`)
 
 Controls how duplicate files are identified. Only the first occurrence is kept.
 
@@ -179,9 +246,9 @@ python main.py --base-path /data --unique hash
 python main.py --base-path /data --unique namepattern
 ```
 
-### Output Options
+## Output
 
-#### Output format (`--output-format`)
+### Output format (`--output-format`)
 
 ```bash
 # JSONL output (default)
@@ -191,7 +258,7 @@ python main.py --base-path /data --output-format jsonl
 python main.py --base-path /data --output-format csv
 ```
 
-#### Output folder (`-o`)
+### Output folder (`-o`)
 
 The tool creates a timestamped directory `fs_hunter_YYYYMMDD_HHMMSS/` inside the specified folder.
 
@@ -213,22 +280,22 @@ python main.py --base-path /data -o /reports
 
 The `_summary.csv` contains: scan time, start/end range, targets scanned, total files, total size, unique extensions.
 
-### Performance Options
+## Performance
 
-#### Workers (`--workers`)
+### Workers (`--workers` / `-w`)
 
 Number of parallel threads for scanning multiple directories.
 
 ```bash
 # Use 8 threads
-python main.py --paths /data/a --paths /data/b --paths /data/c --workers 8
+python main.py --paths /data/a --paths /data/b --paths /data/c -w 8
 ```
 
 **Default:** 4.
 
-#### Verbose mode (`-v`)
+### Verbose mode (`--verbose` / `-v`)
 
-Shows real-time Rich progress bars per directory with file counts.
+Shows real-time Rich progress bars per directory with scanned/matched file counts.
 
 ```bash
 python main.py --base-path /data -v
@@ -251,7 +318,7 @@ Each scanned file produces the following fields:
 | `mime_type` | Detected MIME type (or `unknown`) |
 | `sha256` | SHA256 checksum (empty string on permission error) |
 
-When using `--delta-csv`, three additional columns are added:
+When using `--delta-csv`, three additional columns are enriched:
 
 | Field | Description |
 |---|---|
@@ -261,9 +328,9 @@ When using `--delta-csv`, three additional columns are added:
 
 ## Filter Execution Order
 
-Filters are applied in this order during scanning for optimal performance:
+Filters are applied in this order during scanning:
 
-1. **Date range** — skip files outside the modified date window
+1. **Lookback / Date range** — skip files outside the modified date window
 2. **Time-of-day** — skip files outside the time window
 3. **Size range** — skip files outside the size bounds
 4. **Path pattern** — glob match on relative path
@@ -277,7 +344,7 @@ fs-hunter/
   main.py         # CLI entry point — typer app, wires the pipeline
   scanner.py      # Multi-threaded recursive directory walking
   metadata.py     # FileMetadata/DeltaInfo dataclasses + extraction
-  filters.py      # Filter functions (date, time, size, pattern, unique)
+  filters.py      # Filter functions (date, time, size, pattern, unique, lookback)
   formatters.py   # Smart date/time/duration parsers
   utils.py        # Delta CSV, DataFrame I/O, output writing, enrichment
 ```
@@ -287,23 +354,35 @@ fs-hunter/
 ## Examples
 
 ```bash
-# Scan /data for parquet files modified since yesterday, output as JSONL
+# Default: scan for parquet files modified in the last hour
 python main.py --base-path /data
 
-# Scan multiple dirs for CSV files modified in 2024, deduplicate by hash
+# Last 7 days, verbose progress
+python main.py --base-path /data --lookback 7D -v
+
+# Absolute date range for all of 2024
+python main.py --base-path /data --scan-start 2024 --scan-end 2025
+
+# Multiple dirs, CSV files, dedup by hash, 8 threads
 python main.py --paths /data/raw --paths /data/derived \
   --file-pattern ".*\.csv$" \
-  --scan-start 2024 --scan-end 2025 \
-  --unique hash
+  --lookback 30D \
+  --unique hash \
+  -w 8 -v
 
-# Scan from delta CSV manifest, verbose progress, CSV output
+# Delta CSV manifest with enrichment, CSV output
 python main.py --delta-csv manifest.csv -v --output-format csv -o /reports
 
-# Large files only, business hours, 8 threads
+# Large files only, business hours
 python main.py --base-path /warehouse \
   --min-size 1048576 \
   --day-start 09:00 --day-end 17:00 \
-  --workers 8 -v
+  --lookback 7D -v
+
+# Path glob filter for specific subdirectories
+python main.py --base-path /data \
+  --path-pattern "*/daily/*.parq" \
+  --lookback 1D
 ```
 
 ## License
