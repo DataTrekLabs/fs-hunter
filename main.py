@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import time
 import typer
 from typing import Optional
 from pathlib import Path
@@ -14,6 +15,7 @@ from utils import (
     write_results,
     write_summary,
     enrich_with_delta,
+    write_metrics,
 )
 from filters import (
     filter_by_date_range,
@@ -95,6 +97,8 @@ def scan(
     output_folder: str = typer.Option("~", "-o", help="Output folder (default: ~)"),
     workers: int = typer.Option(4, "--workers", "-w", help="Parallel threads (default: 4)"),
     verbose: bool = typer.Option(False, "--verbose", "-v", help="Show scan progress details"),
+    no_metrics: bool = typer.Option(False, "--no-metrics", help="Skip metrics.json generation"),
+    metrics_interval: int = typer.Option(30, "--metrics-interval", help="Time bucket size in minutes"),
 ):
     """Scan directories and extract file metadata with filters."""
 
@@ -128,6 +132,7 @@ def scan(
     need_hash = unique == "hash"
 
     # collect scan results
+    scan_start_time = time.time()
     results = []
     for metadata in scan_directories(
         targets=targets,
@@ -144,6 +149,7 @@ def scan(
         console.print(f"{metadata.relative_path}")
         results.append(metadata)
 
+    scan_duration = time.time() - scan_start_time
     console.print(f"\n[green]{len(results)} files found.[/green]")
 
     if not results:
@@ -160,6 +166,10 @@ def scan(
     out_dir = create_output_dir(output_folder)
     results_file = write_results(df, out_dir, fmt=output_format)
     summary_file = write_summary(df, out_dir, targets, scan_start, scan_end)
+
+    if not no_metrics:
+        metrics_file = write_metrics(df, out_dir, scan_duration, metrics_interval)
+        console.print(f"[green]Metrics:[/green]  {metrics_file}")
 
     console.print(f"[green]Results:[/green]  {results_file}")
     console.print(f"[green]Summary:[/green]  {summary_file}")

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import re
 from datetime import datetime
 from pathlib import Path
@@ -143,3 +144,109 @@ def name_to_pattern(filename: str) -> str:
             else:
                 result.append(rf"\d{{{len(part)}}}")
     return "".join(result)
+
+
+def write_metrics(df: pd.DataFrame, out_dir: Path, scan_duration: float,
+                  interval_minutes: int = 30) -> Path:
+    """Build and write metrics.json with scan performance stats and breakdowns."""
+    metrics: dict = {}
+
+    # --- scan_performance ---
+    metrics["scan_performance"] = {
+        "total_matched": len(df),
+        "scan_duration_seconds": round(scan_duration, 3),
+    }
+
+    # --- size_stats ---
+    if "size_bytes" in df.columns and len(df) > 0:
+        metrics["size_stats"] = {
+            "total_bytes": int(df["size_bytes"].sum()),
+            "avg_bytes": int(df["size_bytes"].mean()),
+            "min_bytes": int(df["size_bytes"].min()),
+            "max_bytes": int(df["size_bytes"].max()),
+        }
+    else:
+        metrics["size_stats"] = {
+            "total_bytes": 0, "avg_bytes": 0, "min_bytes": 0, "max_bytes": 0,
+        }
+
+    # --- by_extension ---
+    by_ext: dict = {}
+    if "extension" in df.columns and "size_bytes" in df.columns and len(df) > 0:
+        grouped = df.groupby("extension", dropna=False)
+        for ext, group in grouped:
+            key = ext if ext else "(none)"
+            by_ext[key] = {
+                "count": len(group),
+                "total_bytes": int(group["size_bytes"].sum()),
+            }
+    metrics["by_extension"] = by_ext
+
+    # --- by_directory (first path component of full_path relative to base) ---
+    by_dir: dict = {}
+    if "full_path" in df.columns and "size_bytes" in df.columns and len(df) > 0:
+        def _top_dir(full_path: str) -> str:
+            parts = Path(full_path).parts
+            # Use the parent directory name (second to last component)
+            if len(parts) >= 2:
+                return parts[-2]
+            return parts[0] if parts else "(root)"
+
+        df_copy = df.copy()
+        df_copy["_top_dir"] = df_copy["full_path"].apply(_top_dir)
+        grouped = df_copy.groupby("_top_dir", dropna=False)
+        for dirname, group in grouped:
+            by_dir[dirname] = {
+                "count": len(group),
+                "total_bytes": int(group["size_bytes"].sum()),
+            }
+    metrics["by_directory"] = by_dir
+
+    # --- time_buckets (24h split into N-minute intervals by modified time) ---
+    buckets_per_day = (24 * 60) // interval_minutes
+    time_buckets: list[dict] = []
+
+    if "modified" in df.columns and len(df) > 0:
+        # Ensure modified is datetime
+        mod_col = pd.to_datetime(df["modified"], errors="coerce")
+
+        for i in range(buckets_per_day):
+            start_min = i * interval_minutes
+            end_min = start_min + interval_minutes
+            start_h, start_m = divmod(start_min, 60)
+            end_h, end_m = divmod(end_min, 60)
+            label = f"{start_h:02d}:{start_m:02d}-{end_h:02d}:{end_m:02d}"
+
+            # Filter files whose modified time-of-day falls in this bucket
+            time_of_day = mod_col.dt.hour * 60 + mod_col.dt.minute
+            mask = (time_of_day >= start_min) & (time_of_day < end_min)
+            bucket_df = df[mask]
+
+            bucket = {
+                "interval": label,
+                "count": len(bucket_df),
+                "total_bytes": int(bucket_df["size_bytes"].sum()) if "size_bytes" in bucket_df.columns else 0,
+                "files": bucket_df["full_path"].tolist() if len(bucket_df) > 0 else [],
+            }
+            time_buckets.append(bucket)
+
+        # Find peak bucket
+        peak = max(time_buckets, key=lambda b: b["count"])
+        empty_count = sum(1 for b in time_buckets if b["count"] == 0)
+    else:
+        peak = {"interval": "N/A", "count": 0}
+        empty_count = buckets_per_day
+
+    metrics["time_buckets"] = {
+        "interval_minutes": interval_minutes,
+        "buckets": time_buckets,
+        "peak_bucket": peak["interval"],
+        "peak_count": peak["count"],
+        "empty_buckets": empty_count,
+    }
+
+    # Write to file
+    metrics_file = out_dir / "metrics.json"
+    with open(metrics_file, "w", encoding="utf-8") as f:
+        json.dump(metrics, f, indent=2, default=str)
+    return metrics_file
