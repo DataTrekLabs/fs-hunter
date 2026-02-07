@@ -81,7 +81,7 @@ def scan(
     delta_csv: Optional[str] = typer.Option(None, "--delta-csv", help="CSV file with Directory column (pandas)"),
     scan_start: str = typer.Option(None, "--scan-start", help="Date range start (default: yesterday 00:00:00)"),
     scan_end: str = typer.Option(None, "--scan-end", help="Date range end (default: now)"),
-    lookback: Optional[str] = typer.Option(None, "--lookback", help="Relative duration e.g. 7D, 2H, 1D12H30M (replaces --scan-start/--scan-end)"),
+    lookback: str = typer.Option("1H", "--lookback", help="Relative duration e.g. 7D, 2H, 1D12H30M (replaces --scan-start/--scan-end)"),
     day_start: str = typer.Option("00:00:00", "--day-start", help="Time-of-day start"),
     day_end: str = typer.Option("23:59:59", "--day-end", help="Time-of-day end"),
     file_pattern: str = typer.Option(r".*\.parq(uet)?$", "--file-pattern", help="Regex on filename"),
@@ -98,14 +98,7 @@ def scan(
 
     targets, delta_records = _resolve_targets(base_path, paths, path_list, delta_csv)
 
-    if lookback and (scan_start is not None or scan_end is not None):
-        console.print("[red]Error:[/red] --lookback cannot be combined with --scan-start/--scan-end.")
-        raise typer.Exit(1)
-
-    if scan_start is None:
-        scan_start = _yesterday_midnight()
-    if scan_end is None:
-        scan_end = _now()
+    use_date_range = scan_start is not None or scan_end is not None
 
     if unique not in ("hash", "namepattern"):
         console.print("[red]Error:[/red] --unique must be 'hash' or 'namepattern'.")
@@ -115,10 +108,14 @@ def scan(
         console.print("[red]Error:[/red] --output-format must be 'jsonl' or 'csv'.")
         raise typer.Exit(1)
 
-    if lookback:
-        date_filter = filter_by_past_duration(lookback)
-    else:
+    if use_date_range:
+        if scan_start is None:
+            scan_start = _yesterday_midnight()
+        if scan_end is None:
+            scan_end = _now()
         date_filter = filter_by_date_range(after=scan_start, before=scan_end)
+    else:
+        date_filter = filter_by_past_duration(lookback)
     time_filter = filter_by_time_range(day_start, day_end)
 
     size_filter = None
