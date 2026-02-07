@@ -24,6 +24,7 @@ from filters import (
     filter_by_size_range,
     filter_unique,
 )
+from formatters import parse_date, parse_duration
 
 app = typer.Typer(help="fs-hunter: Scan directories and extract file metadata.")
 console = Console()
@@ -120,8 +121,10 @@ def scan(
         if scan_end is None:
             scan_end = _now()
         date_filter = filter_by_date_range(after=scan_start, before=scan_end)
+        dir_cutoff = parse_date(scan_start).timestamp()
     else:
         date_filter = filter_by_past_duration(lookback)
+        dir_cutoff = (datetime.now() - parse_duration(lookback)).timestamp()
     time_filter = filter_by_time_range(day_start, day_end)
 
     size_filter = None
@@ -145,6 +148,7 @@ def scan(
         need_hash=need_hash,
         workers=workers,
         verbose=verbose,
+        dir_cutoff=dir_cutoff,
     ):
         console.print(f"{metadata.relative_path}")
         results.append(metadata)

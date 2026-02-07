@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import os
 import sys
 import fnmatch
 import re
@@ -8,6 +9,40 @@ from typing import Callable, Generator
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from rich.progress import Progress, SpinnerColumn, TextColumn, BarColumn, TaskProgressColumn, TimeElapsedColumn
 from metadata import FileMetadata, extract_metadata_stat, enrich_metadata
+
+
+def _dir_mtime(path: str) -> float:
+    """Get directory mtime, returning 0 on error."""
+    try:
+        return os.stat(path).st_mtime
+    except (PermissionError, OSError):
+        return 0
+
+
+def _walk_files(root: Path, dir_cutoff: float | None) -> Generator[Path, None, None]:
+    """Walk directory tree yielding file paths, pruning old directories.
+
+    When dir_cutoff is set, skips subdirectories whose mtime is older
+    than the cutoff — they can't contain recently ingested files.
+    """
+    for dirpath, dirnames, filenames in os.walk(root):
+        if dir_cutoff is not None:
+            dirnames[:] = [
+                d for d in dirnames
+                if _dir_mtime(os.path.join(dirpath, d)) >= dir_cutoff
+            ]
+        for fname in filenames:
+            yield Path(os.path.join(dirpath, fname))
+
+
+def _list_files(directory: Path) -> Generator[Path, None, None]:
+    """List files in a single directory (non-recursive)."""
+    try:
+        for entry in os.scandir(directory):
+            if entry.is_file(follow_symlinks=False):
+                yield Path(entry.path)
+    except PermissionError:
+        pass
 
 
 def _expand_dir(
@@ -102,12 +137,15 @@ def _scan_single_target(
     recursive: bool = True,
     progress: Progress | None = None,
     task_id=None,
+    dir_cutoff: float | None = None,
 ) -> list[FileMetadata]:
     """Scan a single directory with three-tier filter cascade.
 
     Tier 0 — Free (zero I/O): name_regex, path_pattern
     Tier 1 — Cheap (1 stat syscall): date, time, size filters
     Tier 2 — Expensive (file I/O + OS calls): owner, MIME enrichment
+
+    dir_cutoff: skip subdirectories with mtime older than this timestamp.
     """
     results = []
     scan_dir = Path(target).resolve()
@@ -121,12 +159,13 @@ def _scan_single_target(
     scanned = 0
     matched = 0
     display_name = scan_dir.name
-    glob_pattern = "**/*" if recursive else "*"
 
-    for file_path in scan_dir.glob(glob_pattern):
-        if not file_path.is_file():
-            continue
+    if recursive:
+        file_iter = _walk_files(scan_dir, dir_cutoff)
+    else:
+        file_iter = _list_files(scan_dir)
 
+    for file_path in file_iter:
         scanned += 1
 
         # --- Tier 0: Free checks (no I/O) ---
@@ -197,6 +236,7 @@ def scan_directories(
     need_hash: bool = False,
     workers: int = 4,
     verbose: bool = False,
+    dir_cutoff: float | None = None,
 ) -> Generator[FileMetadata, None, None]:
     """Walk target directories and yield filtered FileMetadata.
 
@@ -206,6 +246,7 @@ def scan_directories(
       Tier 2 — owner, MIME type (expensive I/O)
       Post  — SHA256, unique_filter
 
+    dir_cutoff: skip subdirectories with mtime older than this timestamp.
     When workers > 1, targets are split up to 2 levels deep for parallelism.
     verbose=True: Rich progress bars per scan unit
     """
@@ -218,6 +259,7 @@ def scan_directories(
                 for metadata in _scan_single_target(
                     scan_path, base_dir, name_regex, date_filter, time_filter,
                     size_filter, path_pattern, need_hash, rec,
+                    dir_cutoff=dir_cutoff,
                 ):
                     if unique_filter and not unique_filter(metadata):
                         continue
@@ -228,7 +270,7 @@ def scan_directories(
                     executor.submit(
                         _scan_single_target, scan_path, base_dir, name_regex,
                         date_filter, time_filter, size_filter, path_pattern,
-                        need_hash, rec,
+                        need_hash, rec, None, None, dir_cutoff,
                     ): scan_path
                     for scan_path, base_dir, rec in expanded
                 }
@@ -258,6 +300,7 @@ def scan_directories(
                 for metadata in _scan_single_target(
                     scan_path, base_dir, name_regex, date_filter, time_filter,
                     size_filter, path_pattern, need_hash, rec, progress, task_id,
+                    dir_cutoff,
                 ):
                     if unique_filter and not unique_filter(metadata):
                         continue
@@ -276,7 +319,7 @@ def scan_directories(
                     executor.submit(
                         _scan_single_target, scan_path, base_dir, name_regex,
                         date_filter, time_filter, size_filter, path_pattern,
-                        need_hash, rec, progress, tid,
+                        need_hash, rec, progress, tid, dir_cutoff,
                     ): scan_path
                     for scan_path, (tid, base_dir, rec) in task_ids.items()
                 }
