@@ -1,6 +1,11 @@
 import hashlib
-import mimetypes
 import stat
+
+try:
+    import magic
+    _magic_instance = magic.Magic(mime=True)
+except ImportError:
+    _magic_instance = None
 from dataclasses import dataclass, asdict
 from datetime import datetime
 from pathlib import Path
@@ -58,6 +63,17 @@ def _compute_sha256(file_path: Path) -> str:
     return sha256.hexdigest()
 
 
+def _detect_mime(file_path: Path) -> str:
+    """Detect MIME type via file header bytes, fall back to extension."""
+    if _magic_instance:
+        try:
+            return _magic_instance.from_file(str(file_path))
+        except (PermissionError, OSError):
+            pass
+    import mimetypes
+    return mimetypes.guess_type(str(file_path))[0] or "unknown"
+
+
 def _get_owner(file_path: Path) -> str:
     """Get file owner cross-platform."""
     try:
@@ -80,6 +96,6 @@ def extract_metadata(file_path: Path, base_dir: Path) -> FileMetadata:
         modified=datetime.fromtimestamp(file_stat.st_mtime),
         permissions=stat.filemode(file_stat.st_mode),
         owner=_get_owner(file_path),
-        mime_type=mimetypes.guess_type(str(file_path))[0] or "unknown",
+        mime_type=_detect_mime(file_path),
         sha256="",
     )
