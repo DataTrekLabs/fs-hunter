@@ -125,6 +125,7 @@ def scan(
         size_filter = filter_by_size_range(min_size=min_size, max_size=max_size)
 
     uniq_filter = filter_unique(base=unique)
+    need_hash = unique == "hash"
 
     # collect scan results
     results = []
@@ -136,6 +137,7 @@ def scan(
         path_pattern=path_pattern,
         name_pattern=file_pattern,
         unique_filter=uniq_filter,
+        need_hash=need_hash,
         workers=workers,
         verbose=verbose,
     ):

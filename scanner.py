@@ -17,6 +17,7 @@ def _scan_single_target(
     time_filter: Callable[[FileMetadata], bool] | None,
     size_filter: Callable[[FileMetadata], bool] | None,
     path_pattern: str | None,
+    need_hash: bool = False,
     progress: Progress | None = None,
     task_id=None,
 ) -> list[FileMetadata]:
@@ -59,6 +60,9 @@ def _scan_single_target(
         if name_regex and not name_regex.search(metadata.name):
             continue
 
+        if need_hash:
+            metadata.compute_sha256()
+
         matched += 1
         results.append(metadata)
 
@@ -82,6 +86,7 @@ def scan_directories(
     path_pattern: str | None = None,
     name_pattern: str | None = None,
     unique_filter: Callable[[FileMetadata], bool] | None = None,
+    need_hash: bool = False,
     workers: int = 4,
     verbose: bool = False,
 ) -> Generator[FileMetadata, None, None]:
@@ -105,7 +110,7 @@ def scan_directories(
             for target in targets:
                 for metadata in _scan_single_target(
                     target, name_regex, date_filter, time_filter,
-                    size_filter, path_pattern,
+                    size_filter, path_pattern, need_hash,
                 ):
                     if unique_filter and not unique_filter(metadata):
                         continue
@@ -116,6 +121,7 @@ def scan_directories(
                     executor.submit(
                         _scan_single_target, target, name_regex,
                         date_filter, time_filter, size_filter, path_pattern,
+                        need_hash,
                     ): target
                     for target in targets
                 }
@@ -144,7 +150,7 @@ def scan_directories(
                 )
                 for metadata in _scan_single_target(
                     target, name_regex, date_filter, time_filter,
-                    size_filter, path_pattern, progress, task_id,
+                    size_filter, path_pattern, need_hash, progress, task_id,
                 ):
                     if unique_filter and not unique_filter(metadata):
                         continue
@@ -163,7 +169,7 @@ def scan_directories(
                     executor.submit(
                         _scan_single_target, target, name_regex,
                         date_filter, time_filter, size_filter, path_pattern,
-                        progress, task_ids[target],
+                        need_hash, progress, task_ids[target],
                     ): target
                     for target in targets
                 }

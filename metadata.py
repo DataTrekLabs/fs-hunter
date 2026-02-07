@@ -34,6 +34,10 @@ class FileMetadata:
     mime_type: str
     sha256: str
 
+    def compute_sha256(self) -> None:
+        """Compute SHA256 hash lazily (reads entire file)."""
+        self.sha256 = _compute_sha256(Path(self.full_path))
+
     def to_dict(self) -> dict:
         d = asdict(self)
         d.pop("relative_path", None)
@@ -77,5 +81,5 @@ def extract_metadata(file_path: Path, base_dir: Path) -> FileMetadata:
         permissions=stat.filemode(file_stat.st_mode),
         owner=_get_owner(file_path),
         mime_type=mimetypes.guess_type(str(file_path))[0] or "unknown",
-        sha256=_compute_sha256(file_path),
+        sha256="",
     )

@@ -316,7 +316,7 @@ Each scanned file produces the following fields:
 | `permissions` | Unix-style permission string (e.g., `-rw-r--r--`) |
 | `owner` | File owner (or `N/A` if unavailable) |
 | `mime_type` | Detected MIME type (or `unknown`) |
-| `sha256` | SHA256 checksum (empty string on permission error) |
+| `sha256` | SHA256 checksum (only computed when `--unique hash`; empty otherwise) |
 
 When using `--delta-csv`, three additional columns are enriched:
 
@@ -335,7 +335,8 @@ Filters are applied in this order during scanning:
 3. **Size range** — skip files outside the size bounds
 4. **Path pattern** — glob match on relative path
 5. **Name pattern** — regex match on filename
-6. **Unique filter** — deduplicate (applied last, after all other filters)
+6. **SHA256 hash** — computed only for files that pass all above filters, and only when `--unique hash` is used
+7. **Unique filter** — deduplicate (applied last, after all other filters)
 
 ## Architecture
 
