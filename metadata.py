@@ -1,4 +1,5 @@
 import hashlib
+import os
 import stat
 
 try:
@@ -82,10 +83,14 @@ def _get_owner(file_path: Path) -> str:
         return "N/A"
 
 
-def extract_metadata(file_path: Path, base_dir: Path) -> FileMetadata:
-    """Extract all metadata from a single file."""
-    file_stat = file_path.stat()
+def extract_metadata_stat(
+    file_path: Path, base_dir: Path, file_stat: os.stat_result
+) -> FileMetadata:
+    """Build FileMetadata from a pre-computed stat result.
 
+    Owner and mime_type are set to placeholders; call enrich_metadata()
+    to fill them in after cheaper filters have passed.
+    """
     return FileMetadata(
         name=file_path.name,
         extension=file_path.suffix,
@@ -95,7 +100,21 @@ def extract_metadata(file_path: Path, base_dir: Path) -> FileMetadata:
         created=datetime.fromtimestamp(file_stat.st_ctime),
         modified=datetime.fromtimestamp(file_stat.st_mtime),
         permissions=stat.filemode(file_stat.st_mode),
-        owner=_get_owner(file_path),
-        mime_type=_detect_mime(file_path),
+        owner="",
+        mime_type="",
         sha256="",
     )
+
+
+def enrich_metadata(metadata: FileMetadata, file_path: Path) -> FileMetadata:
+    """Fill in expensive fields (owner, mime_type) on an existing FileMetadata."""
+    metadata.owner = _get_owner(file_path)
+    metadata.mime_type = _detect_mime(file_path)
+    return metadata
+
+
+def extract_metadata(file_path: Path, base_dir: Path) -> FileMetadata:
+    """Extract all metadata from a single file (convenience wrapper)."""
+    file_stat = file_path.stat()
+    metadata = extract_metadata_stat(file_path, base_dir, file_stat)
+    return enrich_metadata(metadata, file_path)

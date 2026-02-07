@@ -7,56 +7,85 @@ from pathlib import Path
 from typing import Callable, Generator
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from rich.progress import Progress, SpinnerColumn, TextColumn, BarColumn, TaskProgressColumn, TimeElapsedColumn
-from metadata import FileMetadata, extract_metadata
+from metadata import FileMetadata, extract_metadata_stat, enrich_metadata
+
+
+def _expand_dir(
+    directory: Path,
+    base_dir: Path,
+    expanded: list[tuple[str, Path, bool]],
+    depth: int,
+    max_depth: int,
+) -> None:
+    """Recursively split a directory into scan units for parallelism.
+
+    At each level:
+    - Adds a non-recursive entry for files directly in this directory
+    - If depth < max_depth, recurses into child directories that themselves
+      contain subdirectories; leaf directories are added as recursive entries
+    """
+    # Direct files at this level (non-recursive scan)
+    expanded.append((str(directory), base_dir, False))
+
+    try:
+        children = sorted(directory.iterdir())
+    except PermissionError:
+        return
+
+    child_dirs = [c for c in children if c.is_dir()]
+
+    for child in child_dirs:
+        if depth < max_depth:
+            # Check if child has any subdirectories worth splitting further
+            try:
+                has_subdirs = any(gc.is_dir() for gc in child.iterdir())
+            except PermissionError:
+                has_subdirs = False
+
+            if has_subdirs:
+                _expand_dir(child, base_dir, expanded, depth + 1, max_depth)
+            else:
+                # Leaf directory — scan recursively as a single unit
+                expanded.append((str(child), base_dir, True))
+        else:
+            # Max depth reached — scan recursively as a single unit
+            expanded.append((str(child), base_dir, True))
 
 
 def _expand_targets(targets: list[str], workers: int) -> list[tuple[str, Path, bool]]:
     """Expand targets into (scan_path, base_dir, recursive) tuples.
 
-    When workers > 1, splits each target into immediate subdirectories
-    so they can be scanned in parallel.
+    When workers > 1, splits each target up to 2 levels deep so large
+    subdirectories don't bottleneck a single thread.
     """
     if workers <= 1:
         return [(t, Path(t).resolve(), True) for t in targets]
 
-    expanded = []
+    expanded: list[tuple[str, Path, bool]] = []
     for target in targets:
         base_dir = Path(target).resolve()
         if not base_dir.is_dir():
             expanded.append((target, base_dir, True))
             continue
-        # Direct files in root (non-recursive)
-        expanded.append((target, base_dir, False))
-        # Each subdirectory scanned recursively in parallel
-        try:
-            for child in sorted(base_dir.iterdir()):
-                if child.is_dir():
-                    expanded.append((str(child), base_dir, True))
-        except PermissionError:
-            pass
+        _expand_dir(base_dir, base_dir, expanded, depth=0, max_depth=2)
     return expanded
 
 
-def _apply_filters(
+def _apply_stat_filters(
     metadata: FileMetadata,
     date_filter: Callable[[FileMetadata], bool] | None,
     time_filter: Callable[[FileMetadata], bool] | None,
     size_filter: Callable[[FileMetadata], bool] | None,
-    path_pattern: str | None,
-    name_regex: re.Pattern | None,
 ) -> bool:
-    """Return True if the file passes all cheap filters."""
+    """Return True if the file passes stat-based filters (Tier 1).
+
+    Name and path filters are handled at Tier 0 before metadata is built.
+    """
     if date_filter and not date_filter(metadata):
         return False
     if time_filter and not time_filter(metadata):
         return False
     if size_filter and not size_filter(metadata):
-        return False
-    if path_pattern:
-        rel = metadata.relative_path.replace("\\", "/")
-        if not fnmatch.fnmatch(rel, path_pattern):
-            return False
-    if name_regex and not name_regex.search(metadata.name):
         return False
     return True
 
@@ -74,7 +103,12 @@ def _scan_single_target(
     progress: Progress | None = None,
     task_id=None,
 ) -> list[FileMetadata]:
-    """Scan a single directory with filters. Returns list of matching metadata."""
+    """Scan a single directory with three-tier filter cascade.
+
+    Tier 0 — Free (zero I/O): name_regex, path_pattern
+    Tier 1 — Cheap (1 stat syscall): date, time, size filters
+    Tier 2 — Expensive (file I/O + OS calls): owner, MIME enrichment
+    """
     results = []
     scan_dir = Path(target).resolve()
     if not scan_dir.exists():
@@ -95,19 +129,50 @@ def _scan_single_target(
 
         scanned += 1
 
+        # --- Tier 0: Free checks (no I/O) ---
+        if name_regex and not name_regex.search(file_path.name):
+            if progress and task_id is not None:
+                progress.update(task_id, completed=scanned,
+                                description=f"[cyan]{display_name}[/cyan] [dim]scanned:{scanned} matched:{matched}[/dim]")
+            continue
+
+        if path_pattern:
+            try:
+                rel = str(file_path.relative_to(base_dir)).replace("\\", "/")
+            except ValueError:
+                rel = file_path.name
+            if not fnmatch.fnmatch(rel, path_pattern):
+                if progress and task_id is not None:
+                    progress.update(task_id, completed=scanned,
+                                    description=f"[cyan]{display_name}[/cyan] [dim]scanned:{scanned} matched:{matched}[/dim]")
+                continue
+
+        # --- Tier 1: Cheap checks (stat syscall) ---
         try:
-            metadata = extract_metadata(file_path, base_dir)
+            file_stat = file_path.stat()
+            metadata = extract_metadata_stat(file_path, base_dir, file_stat)
         except (PermissionError, OSError):
             if progress and task_id is not None:
                 progress.update(task_id, completed=scanned,
                                 description=f"[cyan]{display_name}[/cyan] [dim]scanned:{scanned} matched:{matched}[/dim]")
             continue
 
-        if _apply_filters(metadata, date_filter, time_filter, size_filter, path_pattern, name_regex):
-            if need_hash:
-                metadata.compute_sha256()
-            matched += 1
-            results.append(metadata)
+        if not _apply_stat_filters(metadata, date_filter, time_filter, size_filter):
+            if progress and task_id is not None:
+                progress.update(task_id, completed=scanned,
+                                description=f"[cyan]{display_name}[/cyan] [dim]scanned:{scanned} matched:{matched}[/dim]")
+            continue
+
+        # --- Tier 2: Expensive enrichment (owner, MIME) ---
+        try:
+            enrich_metadata(metadata, file_path)
+        except (PermissionError, OSError):
+            pass  # keep placeholder values
+
+        if need_hash:
+            metadata.compute_sha256()
+        matched += 1
+        results.append(metadata)
 
         if progress and task_id is not None:
             progress.update(task_id, completed=scanned,
@@ -135,16 +200,13 @@ def scan_directories(
 ) -> Generator[FileMetadata, None, None]:
     """Walk target directories and yield filtered FileMetadata.
 
-    Filter order (all optional):
-      1. date_range OR past_duration
-      2. time_range
-      3. size_range
-      4. path_pattern
-      5. name_pattern
-      6. SHA256 (only when need_hash=True)
-      7. unique_filter (last)
+    Filter cascade (all optional):
+      Tier 0 — name_pattern, path_pattern (zero I/O, rejects early)
+      Tier 1 — date, time, size (one stat call)
+      Tier 2 — owner, MIME type (expensive I/O)
+      Post  — SHA256, unique_filter
 
-    When workers > 1, each target's subdirectories are scanned in parallel.
+    When workers > 1, targets are split up to 2 levels deep for parallelism.
     verbose=True: Rich progress bars per scan unit
     """
     name_regex = re.compile(name_pattern) if name_pattern else None
