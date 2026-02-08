@@ -515,6 +515,60 @@ python main.py compare \
   -w 8 -v -o /reports
 ```
 
+## Viewing Results
+
+Useful commands for inspecting output CSVs on the server:
+
+```bash
+# View summary formatted as table
+column -s, -t /path/to/fs_hunter/YYYYMMDD_HHMMSS/_summary.csv
+
+# View specific columns from results (e.g. full_path, ctime, mtime)
+awk -F, '{print $3","$5","$6}' /path/to/fs_hunter/YYYYMMDD_HHMMSS/results.csv | column -s, -t
+
+# View name, ctime, mtime columns
+awk -F, '{print $1","$5","$6}' /path/to/fs_hunter/YYYYMMDD_HHMMSS/results.csv | column -s, -t
+```
+
+**Results CSV columns:** `name, extension, full_path, size_bytes, ctime, mtime, permissions, owner, mime_type, sha256`
+
+### Inspecting JSON with jq
+
+```bash
+# View metrics.json pretty-printed
+jq . /path/to/fs_hunter/YYYYMMDD_HHMMSS/metrics.json
+
+# Scan performance summary
+jq '.scan_performance' metrics.json
+
+# Size stats
+jq '.size_stats' metrics.json
+
+# File count per extension
+jq '.by_extension' metrics.json
+
+# List extensions with more than 10 files
+jq '.by_extension | to_entries[] | select(.value.count > 10)' metrics.json
+
+# Peak time bucket
+jq '.time_buckets | {peak_bucket, peak_count}' metrics.json
+
+# Non-empty time buckets only
+jq '.time_buckets.buckets[] | select(.count > 0)' metrics.json
+
+# File count per directory
+jq '.by_directory | to_entries[] | sort_by(-.value.count)' metrics.json
+
+# Delta metrics: added vs removed summary
+jq '.by_change_type' delta_metrics.json
+
+# Delta: added/removed count per extension
+jq '.by_extension' delta_metrics.json
+
+# Total size added and removed
+jq '{added_bytes: .total_size_added_bytes, removed_bytes: .total_size_removed_bytes}' delta_metrics.json
+```
+
 ## License
 
 Internal use.
