@@ -12,27 +12,88 @@ A Python CLI tool for scanning directories, extracting extended file metadata, a
 - **Rich progress bars** — real-time scan progress per directory in verbose mode
 - **Flexible output** — JSONL (default) or CSV, with automatic summary stats
 
-## Installation
+## Setup
+
+### Prerequisites
+
+- Python 3.10+ (check with `python --version` or `python3 --version`)
+- `pip` (comes with Python)
+- `git`
+
+### Step 1: Clone the repository
 
 ```bash
-# Clone the repository
+# From codewilling (server access)
 git clone git@git.codewilling.com:alchmy/fs-hunter.git
+
+# Or from GitHub
+git clone https://github.com/DataTrekLabs/fs-hunter.git
+
 cd fs-hunter
+```
 
-# Create and activate virtual environment
+### Step 2: Create a Python virtual environment
+
+```bash
+# Linux/macOS
+python3 -m venv venv
+source venv/bin/activate
+
+# Windows
 python -m venv venv
-source venv/bin/activate   # Linux/macOS
-venv\Scripts\activate      # Windows
+venv\Scripts\activate
+```
 
-# Install dependencies
+You should see `(venv)` in your terminal prompt after activation.
+
+### Step 3: Install dependencies
+
+```bash
+pip install -r requirements.txt
+```
+
+This installs: `typer`, `rich`, `pandas`, `python-magic`, `python-dotenv`.
+
+### Step 4: Configure environment (optional)
+
+```bash
+cp .env.example .env
+```
+
+Edit `.env` to set a default output directory:
+
+```
+FS_HUNTER_OUTPUT_DIR=/sf/home/youruser/output
+```
+
+This avoids passing `-o` every time. CLI flags override `.env` values.
+
+### Step 5: Verify installation
+
+```bash
+python main.py --help
+python main.py scan --help
+python main.py compare --help
+```
+
+### Updating
+
+```bash
+cd fs-hunter
+git pull
+source venv/bin/activate   # Linux/macOS
 pip install -r requirements.txt
 ```
 
 ### Dependencies
 
-- `typer` — CLI framework
-- `rich` — terminal formatting and progress bars
-- `pandas` — DataFrame operations and CSV/JSONL output
+| Package | Purpose |
+|---|---|
+| `typer` | CLI framework with subcommands |
+| `rich` | Terminal formatting and progress bars |
+| `pandas` | DataFrame operations and CSV/JSONL output |
+| `python-magic` | MIME type detection via file headers |
+| `python-dotenv` | Load `.env` configuration |
 
 ## Quick Start
 
