@@ -368,7 +368,7 @@ python main.py scan -d /data -o /reports
 **Output structure:**
 
 ```
-/reports/fs_hunter_20260207_143022/
+/reports/fs_hunter/scan/20260207_143022/
   results.csv        # or results.jsonl
   _summary.csv       # scan statistics
   metrics.json       # scan performance and breakdown stats
@@ -498,7 +498,7 @@ python main.py compare --source-prefix /data/v1 --target-prefix /data/v2 --files
 ### Compare Output
 
 ```
-fs_hunter/{YYYYMMDD_HHMMSS}/compare/
+fs_hunter/compare/{YYYYMMDD_HHMMSS}/
     _summary.csv         — source_dir, target_dir, file counts, added/removed/unchanged
     s_result.csv         — full source scan results
     t_result.csv         — full target scan results

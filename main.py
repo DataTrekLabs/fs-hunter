@@ -164,7 +164,7 @@ def scan(
     df = results_to_dataframe(results)
 
     # write output files
-    out_dir = create_output_dir(output_folder)
+    out_dir = create_output_dir(output_folder, "scan")
     results_file = write_results(df, out_dir, fmt=output_format)
     summary_file = write_summary(df, out_dir, targets, scan_start, scan_end)
 
@@ -264,7 +264,7 @@ def delta(
     df = results_to_dataframe(results)
     df = enrich_with_delta(df, delta_records)
 
-    out_dir = create_output_dir(output_folder)
+    out_dir = create_output_dir(output_folder, "delta")
     results_file = write_results(df, out_dir, fmt=output_format)
     summary_file = write_summary(df, out_dir, targets, scan_start, scan_end)
 
@@ -398,47 +398,43 @@ def compare(
 
     console.print(f"\n[bold]Delta:[/bold] [green]+{added_count} added[/green], [red]-{removed_count} removed[/red]")
 
-    # Create output directory with compare/ subdirectory
-    out_dir = create_output_dir(output_folder)
-    compare_dir = out_dir / "compare"
-    compare_dir.mkdir(parents=True, exist_ok=True)
+    # Create output directory
+    out_dir = create_output_dir(output_folder, "compare")
 
     # Write source and target results
     if not source_df.empty:
-        s_file = compare_dir / "s_result.csv"
+        s_file = out_dir / "s_result.csv"
         source_df.to_csv(s_file, index=False)
         console.print(f"[green]Source results:[/green]  {s_file}")
 
     if not target_df.empty:
-        t_file = compare_dir / "t_result.csv"
+        t_file = out_dir / "t_result.csv"
         target_df.to_csv(t_file, index=False)
         console.print(f"[green]Target results:[/green]  {t_file}")
 
     # Write comparison summary
-    source_label = source_prefix
-    target_label = target_prefix
     summary_file = write_compare_summary(
         source_df if not source_df.empty else pd.DataFrame(),
         target_df if not target_df.empty else pd.DataFrame(),
-        delta_df, compare_dir, source_label, target_label,
+        delta_df, out_dir, source_prefix, target_prefix,
     )
     console.print(f"[green]Summary:[/green]         {summary_file}")
 
     # Write delta CSV if there are changes
     if not delta_df.empty:
-        delta_file = compare_dir / "delta.csv"
+        delta_file = out_dir / "delta.csv"
         delta_df.to_csv(delta_file, index=False)
         console.print(f"[green]Delta:[/green]           {delta_file}")
 
     # Write delta metrics
     if not no_metrics:
-        dm_file = write_delta_metrics(delta_df, compare_dir)
+        dm_file = write_delta_metrics(delta_df, out_dir)
         console.print(f"[green]Delta metrics:[/green]   {dm_file}")
 
         # Combined metrics on all scanned files
         combined_df = pd.concat([source_df, target_df], ignore_index=True) if not source_df.empty or not target_df.empty else pd.DataFrame()
         if not combined_df.empty:
-            metrics_file = write_metrics(combined_df, compare_dir, scan_duration, metrics_interval)
+            metrics_file = write_metrics(combined_df, out_dir, scan_duration, metrics_interval)
             console.print(f"[green]Metrics:[/green]         {metrics_file}")
 
 
