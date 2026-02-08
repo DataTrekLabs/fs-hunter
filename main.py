@@ -67,6 +67,7 @@ def scan(
     min_size: Optional[int] = typer.Option(None, "--min-size", help="Min file size in bytes"),
     max_size: Optional[int] = typer.Option(None, "--max-size", help="Max file size in bytes"),
     unique: str = typer.Option("namepattern", "--unique", help="Deduplicate by 'hash' or 'namepattern'"),
+    off_hash: bool = typer.Option(False, "--off-hash", help="Disable MD5 hash computation"),
     output_format: str = typer.Option("csv", "--output-format", help="Output format: 'csv' or 'jsonl'"),
     output_folder: str = typer.Option(os.getenv("FS_HUNTER_OUTPUT_DIR", "~"), "-o", help="Output folder"),
     workers: int = typer.Option(4, "--workers", "-w", help="Parallel threads (default: 4)"),
@@ -116,7 +117,8 @@ def scan(
     pp_type, pp_value = path_pattern if path_pattern else (fp_type, None)
 
     uniq_filter = filter_unique(base=unique)
-    need_hash = unique == "hash"
+    enable_hash = os.getenv("ENABLE_HASH", "true").lower() not in ("false", "0", "no")
+    need_hash = (not off_hash) and enable_hash
 
     # collect scan results
     scan_start_time = time.time()
@@ -189,6 +191,7 @@ def delta(
     min_size: Optional[int] = typer.Option(None, "--min-size", help="Min file size in bytes"),
     max_size: Optional[int] = typer.Option(None, "--max-size", help="Max file size in bytes"),
     unique: str = typer.Option("namepattern", "--unique", help="Deduplicate by 'hash' or 'namepattern'"),
+    off_hash: bool = typer.Option(False, "--off-hash", help="Disable MD5 hash computation"),
     output_format: str = typer.Option("csv", "--output-format", help="Output format: 'csv' or 'jsonl'"),
     output_folder: str = typer.Option(os.getenv("FS_HUNTER_OUTPUT_DIR", "~"), "-o", help="Output folder"),
     workers: int = typer.Option(4, "--workers", "-w", help="Parallel threads (default: 4)"),
@@ -228,7 +231,8 @@ def delta(
     pp_type, pp_value = path_pattern if path_pattern else (fp_type, None)
 
     uniq_filter = filter_unique(base=unique)
-    need_hash = unique == "hash"
+    enable_hash = os.getenv("ENABLE_HASH", "true").lower() not in ("false", "0", "no")
+    need_hash = (not off_hash) and enable_hash
     time_filter = filter_by_time_range(day_start, day_end)
 
     scan_start_time = time.time()
@@ -292,6 +296,7 @@ def compare(
     min_size: Optional[int] = typer.Option(None, "--min-size", help="Min file size in bytes"),
     max_size: Optional[int] = typer.Option(None, "--max-size", help="Max file size in bytes"),
     unique: str = typer.Option("namepattern", "--unique", help="Deduplicate by 'hash' or 'namepattern'"),
+    off_hash: bool = typer.Option(False, "--off-hash", help="Disable MD5 hash computation"),
     output_folder: str = typer.Option(os.getenv("FS_HUNTER_OUTPUT_DIR", "~"), "-o", help="Output folder"),
     workers: int = typer.Option(4, "--workers", "-w", help="Parallel threads (default: 4)"),
     verbose: bool = typer.Option(False, "--verbose", "-v", help="Show scan progress details"),
@@ -337,7 +342,8 @@ def compare(
 
     pp_type, pp_value = path_pattern if path_pattern else (fp_type, None)
     time_filter = filter_by_time_range(day_start, day_end)
-    need_hash = unique == "hash"
+    enable_hash = os.getenv("ENABLE_HASH", "true").lower() not in ("false", "0", "no")
+    need_hash = (not off_hash) and enable_hash
 
     def _run_scan(dir_paths: list[str], label: str, ufilter) -> list:
         console.print(f"\n[bold cyan]Scanning {label}:[/bold cyan] {', '.join(dir_paths)}")
