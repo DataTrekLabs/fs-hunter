@@ -845,4 +845,4 @@ See [CONTRIBUTING.md](CONTRIBUTING.md) for development guidelines, coding patter
 
 ## License
 
-Internal use.
+MIT License. See [LICENSE](LICENSE) for details.
