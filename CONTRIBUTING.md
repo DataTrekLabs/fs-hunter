@@ -7,12 +7,7 @@ Thank you for your interest in contributing to fs-hunter! This guide will help y
 ### 1. Clone the repository
 
 ```bash
-# From codewilling
-git clone git@git.codewilling.com:alchmy/fs-hunter.git
-
-# Or from GitHub
 git clone https://github.com/DataTrekLabs/fs-hunter.git
-
 cd fs-hunter
 ```
 

@@ -24,12 +24,7 @@ A Python CLI tool for scanning directories, extracting extended file metadata, a
 ### Step 1: Clone the repository
 
 ```bash
-# From codewilling (server access)
-git clone git@git.codewilling.com:alchmy/fs-hunter.git
-
-# Or from GitHub
 git clone https://github.com/DataTrekLabs/fs-hunter.git
-
 cd fs-hunter
 ```
 
