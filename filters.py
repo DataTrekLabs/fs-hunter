@@ -93,7 +93,7 @@ def filter_unique(base: str = "hash") -> Callable[[FileMetadata], bool]:
 
     def check(m: FileMetadata) -> bool:
         if base == "hash":
-            key = m.sha256
+            key = m.md5
         else:
             key = name_to_pattern(m.name)
         if not key or key in seen:

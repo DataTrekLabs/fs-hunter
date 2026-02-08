@@ -435,7 +435,7 @@ Each scanned file produces the following fields:
 | `permissions` | Unix-style permission string (e.g., `-rw-r--r--`) |
 | `owner` | File owner (or `N/A` if unavailable) |
 | `mime_type` | Detected MIME type (or `unknown`) |
-| `sha256` | SHA256 checksum (only computed when `--unique hash`; empty otherwise) |
+| `md5` | MD5 checksum (only computed when `--unique hash`; empty otherwise) |
 
 When using `delta` command, three additional columns are enriched:
 
@@ -634,7 +634,7 @@ awk -F, '{print $3","$5","$6}' /path/to/fs_hunter/YYYYMMDD_HHMMSS/results.csv | 
 awk -F, '{print $1","$5","$6}' /path/to/fs_hunter/YYYYMMDD_HHMMSS/results.csv | column -s, -t
 ```
 
-**Results CSV columns:** `name, extension, full_path, size_bytes, ctime, mtime, permissions, owner, mime_type, sha256`
+**Results CSV columns:** `name, extension, full_path, size_bytes, ctime, mtime, permissions, owner, mime_type, md5`
 
 ### Inspecting JSON with jq
 

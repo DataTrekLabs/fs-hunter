@@ -38,11 +38,11 @@ class FileMetadata:
     permissions: str
     owner: str
     mime_type: str
-    sha256: str
+    md5: str
 
-    def compute_sha256(self) -> None:
-        """Compute SHA256 hash lazily (reads entire file)."""
-        self.sha256 = _compute_sha256(Path(self.full_path))
+    def compute_hash(self) -> None:
+        """Compute MD5 hash lazily (reads entire file)."""
+        self.md5 = _compute_md5(Path(self.full_path))
 
     def to_dict(self) -> dict:
         d = asdict(self)
@@ -52,16 +52,16 @@ class FileMetadata:
         return d
 
 
-def _compute_sha256(file_path: Path) -> str:
-    """Compute SHA256 in 8KB chunks."""
-    sha256 = hashlib.sha256()
+def _compute_md5(file_path: Path) -> str:
+    """Compute MD5 in 8KB chunks."""
+    md5 = hashlib.md5()
     try:
         with open(file_path, "rb") as f:
             while chunk := f.read(8192):
-                sha256.update(chunk)
+                md5.update(chunk)
     except (PermissionError, OSError):
         return ""
-    return sha256.hexdigest()
+    return md5.hexdigest()
 
 
 def _detect_mime(file_path: Path) -> str:
@@ -102,7 +102,7 @@ def extract_metadata_stat(
         permissions=stat.filemode(file_stat.st_mode),
         owner="",
         mime_type="",
-        sha256="",
+        md5="",
     )
 
 

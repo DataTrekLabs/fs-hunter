@@ -143,7 +143,7 @@ def _enrich_batch(
             pass
 
         if need_hash:
-            metadata.compute_sha256()
+            metadata.compute_hash()
 
         results.append(metadata)
     return results
@@ -336,7 +336,7 @@ def _enrich_file(file_path: Path, need_hash: bool) -> FileMetadata | None:
         metadata = extract_metadata_stat(file_path, base_dir, file_stat)
         enrich_metadata(metadata, file_path)
         if need_hash:
-            metadata.compute_sha256()
+            metadata.compute_hash()
         return metadata
     except (PermissionError, OSError):
         return None
