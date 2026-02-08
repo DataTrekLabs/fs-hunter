@@ -48,8 +48,6 @@ You should see `(venv)` in your terminal prompt after activation.
 pip install -r requirements.txt
 ```
 
-This installs: `typer`, `rich`, `pandas`, `python-magic`, `python-dotenv`.
-
 ### Step 4: Configure environment (optional)
 
 ```bash
@@ -87,16 +85,6 @@ git pull
 source venv/bin/activate   # Linux/macOS
 pip install -r requirements.txt
 ```
-
-### Dependencies
-
-| Package | Purpose |
-|---|---|
-| `typer` | CLI framework with subcommands |
-| `rich` | Terminal formatting and progress bars |
-| `pandas` | DataFrame operations and CSV/JSONL output |
-| `python-magic` | MIME type detection via file headers |
-| `python-dotenv` | Load `.env` configuration |
 
 ## Quick Start
 
@@ -850,6 +838,10 @@ jq '.by_extension' delta_metrics.json
 # Total size added and removed
 jq '{added_bytes: .total_size_added_bytes, removed_bytes: .total_size_removed_bytes}' delta_metrics.json
 ```
+
+## Contributing
+
+See [CONTRIBUTING.md](CONTRIBUTING.md) for development guidelines, coding patterns, and how to submit changes.
 
 ## License
 
