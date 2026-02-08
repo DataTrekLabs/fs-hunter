@@ -18,10 +18,7 @@ from utils import (
     write_metrics,
 )
 from filters import (
-    filter_by_date_range,
-    filter_by_past_duration,
     filter_by_time_range,
-    filter_by_size_range,
     filter_unique,
 )
 
@@ -119,15 +116,8 @@ def scan(
             scan_start = _yesterday_midnight()
         if scan_end is None:
             scan_end = _now()
-        date_filter = filter_by_date_range(after=scan_start, before=scan_end)
-    else:
-        date_filter = filter_by_past_duration(lookback)
+
     time_filter = filter_by_time_range(day_start, day_end)
-
-    size_filter = None
-    if min_size is not None or max_size is not None:
-        size_filter = filter_by_size_range(min_size=min_size, max_size=max_size)
-
     uniq_filter = filter_unique(base=unique)
     need_hash = unique == "hash"
 
@@ -136,11 +126,14 @@ def scan(
     results = []
     for metadata in scan_directories(
         targets=targets,
-        date_filter=date_filter,
-        time_filter=time_filter,
-        size_filter=size_filter,
-        path_pattern=path_pattern,
         name_pattern=file_pattern,
+        lookback=lookback if not use_date_range else None,
+        scan_start=scan_start if use_date_range else None,
+        scan_end=scan_end if use_date_range else None,
+        min_size=min_size,
+        max_size=max_size,
+        time_filter=time_filter,
+        path_pattern=path_pattern,
         unique_filter=uniq_filter,
         need_hash=need_hash,
         workers=workers,
