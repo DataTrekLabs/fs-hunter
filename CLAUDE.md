@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project Overview
 
-fs-hunter is a Python CLI tool that scans directories, extracts extended file metadata (name, size, checksums, MIME type, owner, permissions, dates), applies filters, and outputs results as a table or CSV. It also supports comparing two directory trees to find added/removed files. Flat module structure (no packages).
+fs-hunter is a Python CLI tool that scans directories, extracts extended file metadata (name, size, MD5 checksum, MIME type, owner, permissions, dates), applies filters, and outputs results as a table or CSV. It also supports comparing two directory trees to find added/removed files. Flat module structure (no packages).
 
 ## Running
 
@@ -44,6 +44,15 @@ Three subcommands (`scan`, `delta`, and `compare`) sharing the same scan pipelin
 - **Dependencies**: `typer`, `rich`, `pandas`, `python-dotenv`
 - **`FileMetadata` is a dataclass** so `to_dict()` feeds CSV/JSONL seamlessly
 - **Two-phase metadata**: cheap stat-only first, expensive owner/MIME only for filter-passing files
+- **MD5 hash by default**: computed for every file; disable with `--off-hash` or `ENABLE_HASH=false` in `.env`
 - **Generator pipeline**: scanner yields lazily, results collected only for display
 - **Auto-detecting input**: `_parse_input()` checks if value ends with `.txt` → read lines, else split on comma
 - **Compare uses prefix + subdirs/files**: builds full paths as `prefix/entry` for source and target
+- **Output organized by subcommand**: `fs_hunter/{scan,delta,compare}/YYYYMMDD_HHMMSS/`
+
+## Environment Variables
+
+| Variable | Default | Description |
+|---|---|---|
+| `FS_HUNTER_OUTPUT_DIR` | `~` | Output folder |
+| `ENABLE_HASH` | `true` | Compute MD5 hash for each file |

@@ -4,7 +4,7 @@ A Python CLI tool for scanning directories, extracting extended file metadata, a
 
 ## Features
 
-- **Extended metadata extraction** — name, extension, size, created/modified dates, permissions, owner, MIME type, SHA256 checksum
+- **Extended metadata extraction** — name, extension, size, created/modified dates, permissions, owner, MIME type, MD5 checksum
 - **Smart filtering** — lookback duration, date ranges, time-of-day windows, file size, regex on filenames, glob on paths, deduplication
 - **3 subcommands** — `scan` (directories or files), `delta` (CSV manifest), `compare` (diff two trees)
 - **Auto-detecting input** — pass comma-separated values or a `.txt` file; fs-hunter detects which automatically
@@ -61,13 +61,19 @@ This installs: `typer`, `rich`, `pandas`, `python-magic`, `python-dotenv`.
 cp .env.example .env
 ```
 
-Edit `.env` to set a default output directory:
+Edit `.env` to configure:
 
 ```
 FS_HUNTER_OUTPUT_DIR=/sf/home/youruser/output
+ENABLE_HASH=true
 ```
 
-This avoids passing `-o` every time. CLI flags override `.env` values.
+| Variable | Default | Description |
+|---|---|---|
+| `FS_HUNTER_OUTPUT_DIR` | `~` | Output folder (avoids passing `-o` every time) |
+| `ENABLE_HASH` | `true` | Compute MD5 hash for each file. Set to `false` to disable globally |
+
+CLI flags override `.env` values.
 
 ### Step 5: Verify installation
 
@@ -171,6 +177,7 @@ python main.py scan -f files.txt
 | `--min-size` | | | Minimum file size in bytes |
 | `--max-size` | | | Maximum file size in bytes |
 | `--unique` | | `namepattern` | Dedup mode: `hash` or `namepattern` |
+| `--off-hash` | | `false` | Disable MD5 hash computation |
 | `--output-format` | | `csv` | Output format: `csv` or `jsonl` |
 | | `-o` | `~` | Output folder |
 | `--workers` | `-w` | `4` | Parallel scan threads |
@@ -204,6 +211,7 @@ python main.py delta manifest.csv --output-format csv -o /reports
 | `--min-size` | | | Minimum file size in bytes |
 | `--max-size` | | | Maximum file size in bytes |
 | `--unique` | | `namepattern` | Dedup mode: `hash` or `namepattern` |
+| `--off-hash` | | `false` | Disable MD5 hash computation |
 | `--output-format` | | `csv` | Output format: `csv` or `jsonl` |
 | | `-o` | `~` | Output folder |
 | `--workers` | `-w` | `4` | Parallel scan threads |
@@ -329,7 +337,7 @@ Controls how duplicate files are identified. Only the first occurrence is kept.
 | Mode | Behavior |
 |---|---|
 | `namepattern` | Groups files by structural name pattern. `report_20250601.csv` and `report_20240115.csv` both match `report_\d{4}\d{2}\d{2}\.csv` — only one is kept. |
-| `hash` | Groups by SHA256 checksum — identical content = duplicate. |
+| `hash` | Groups by MD5 checksum — identical content = duplicate. |
 
 **Default:** `namepattern`.
 
@@ -435,7 +443,7 @@ Each scanned file produces the following fields:
 | `permissions` | Unix-style permission string (e.g., `-rw-r--r--`) |
 | `owner` | File owner (or `N/A` if unavailable) |
 | `mime_type` | Detected MIME type (or `unknown`) |
-| `md5` | MD5 checksum (only computed when `--unique hash`; empty otherwise) |
+| `md5` | MD5 checksum (computed by default; disable with `--off-hash` or `ENABLE_HASH=false`) |
 
 When using `delta` command, three additional columns are enriched:
 
@@ -454,7 +462,7 @@ Filters are applied in this order during scanning:
 3. **Size range** — skip files outside the size bounds
 4. **Path pattern** — glob match on relative path
 5. **Name pattern** — regex match on filename
-6. **SHA256 hash** — computed only for files that pass all above filters, and only when `--unique hash` is used
+6. **MD5 hash** — computed for all matching files by default (disable with `--off-hash` or `ENABLE_HASH=false`)
 7. **Unique filter** — deduplicate (applied last, after all other filters)
 
 ## Compare Command
@@ -489,6 +497,7 @@ python main.py compare --source-prefix /data/v1 --target-prefix /data/v2 --files
 | `--min-size` | | | Minimum file size in bytes |
 | `--max-size` | | | Maximum file size in bytes |
 | `--unique` | | `namepattern` | Dedup mode: `hash` or `namepattern` |
+| `--off-hash` | | `false` | Disable MD5 hash computation |
 | | `-o` | `~` | Output folder |
 | `--workers` | `-w` | `4` | Parallel scan threads |
 | `--verbose` | `-v` | `false` | Show Rich progress bars |
@@ -625,13 +634,13 @@ Useful commands for inspecting output CSVs on the server:
 
 ```bash
 # View summary formatted as table
-column -s, -t /path/to/fs_hunter/YYYYMMDD_HHMMSS/_summary.csv
+column -s, -t /path/to/fs_hunter/scan/YYYYMMDD_HHMMSS/_summary.csv
 
 # View specific columns from results (e.g. full_path, ctime, mtime)
-awk -F, '{print $3","$5","$6}' /path/to/fs_hunter/YYYYMMDD_HHMMSS/results.csv | column -s, -t
+awk -F, '{print $3","$5","$6}' /path/to/fs_hunter/scan/YYYYMMDD_HHMMSS/results.csv | column -s, -t
 
 # View name, ctime, mtime columns
-awk -F, '{print $1","$5","$6}' /path/to/fs_hunter/YYYYMMDD_HHMMSS/results.csv | column -s, -t
+awk -F, '{print $1","$5","$6}' /path/to/fs_hunter/scan/YYYYMMDD_HHMMSS/results.csv | column -s, -t
 ```
 
 **Results CSV columns:** `name, extension, full_path, size_bytes, ctime, mtime, permissions, owner, mime_type, md5`
@@ -640,7 +649,7 @@ awk -F, '{print $1","$5","$6}' /path/to/fs_hunter/YYYYMMDD_HHMMSS/results.csv | 
 
 ```bash
 # View metrics.json pretty-printed
-jq . /path/to/fs_hunter/YYYYMMDD_HHMMSS/metrics.json
+jq . /path/to/fs_hunter/scan/YYYYMMDD_HHMMSS/metrics.json
 
 # Scan performance summary
 jq '.scan_performance' metrics.json
