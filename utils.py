@@ -59,9 +59,9 @@ def results_to_dataframe(results: list[FileMetadata]) -> pd.DataFrame:
 
 
 def create_output_dir(output_folder: str = "~") -> Path:
-    """Create timestamped output directory: fs_hunter_YYYYMMDD_HHMMSS/"""
+    """Create timestamped output directory: fs_hunter/YYYYMMDD_HHMMSS/"""
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-    out_dir = Path(output_folder).expanduser() / f"fs_hunter_{timestamp}"
+    out_dir = Path(output_folder).expanduser() / "fs_hunter" / timestamp
     out_dir.mkdir(parents=True, exist_ok=True)
     return out_dir
 
