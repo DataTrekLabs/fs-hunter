@@ -33,8 +33,8 @@ class FileMetadata:
     full_path: str
     relative_path: str
     size_bytes: int
-    created: datetime
-    modified: datetime
+    ctime: datetime
+    mtime: datetime
     permissions: str
     owner: str
     mime_type: str
@@ -47,8 +47,8 @@ class FileMetadata:
     def to_dict(self) -> dict:
         d = asdict(self)
         d.pop("relative_path", None)
-        d["created"] = self.created.strftime("%Y-%m-%d %H:%M:%S")
-        d["modified"] = self.modified.strftime("%Y-%m-%d %H:%M:%S")
+        d["ctime"] = self.ctime.strftime("%Y-%m-%d %H:%M:%S")
+        d["mtime"] = self.mtime.strftime("%Y-%m-%d %H:%M:%S")
         return d
 
 
@@ -97,8 +97,8 @@ def extract_metadata_stat(
         full_path=str(file_path.resolve()),
         relative_path=str(file_path.relative_to(base_dir)),
         size_bytes=file_stat.st_size,
-        created=datetime.fromtimestamp(file_stat.st_ctime),
-        modified=datetime.fromtimestamp(file_stat.st_mtime),
+        ctime=datetime.fromtimestamp(file_stat.st_ctime),
+        mtime=datetime.fromtimestamp(file_stat.st_mtime),
         permissions=stat.filemode(file_stat.st_mode),
         owner="",
         mime_type="",

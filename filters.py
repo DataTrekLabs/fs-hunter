@@ -24,14 +24,14 @@ def filter_by_path_pattern(pattern: str) -> Callable[[FileMetadata], bool]:
 def filter_by_date_range(
     after: str | None = None, before: str | None = None
 ) -> Callable[[FileMetadata], bool]:
-    """Filter by modified date range. Supports partial dates (YYYY, YYYY-MM, etc)."""
+    """Filter by mtime date range. Supports partial dates (YYYY, YYYY-MM, etc)."""
     after_dt = parse_date(after) if after else None
     before_dt = parse_date(before) if before else None
 
     def check(m: FileMetadata) -> bool:
-        if after_dt and m.modified < after_dt:
+        if after_dt and m.mtime < after_dt:
             return False
-        if before_dt and m.modified > before_dt:
+        if before_dt and m.mtime > before_dt:
             return False
         return True
 
@@ -46,7 +46,7 @@ def filter_by_time_range(
     end_t = parse_time(end)
 
     def check(m: FileMetadata) -> bool:
-        file_time = m.modified.time()
+        file_time = m.mtime.time()
         if start_t <= end_t:
             return start_t <= file_time <= end_t
         # wraps midnight: e.g. 22:00 -> 02:00
@@ -71,12 +71,12 @@ def filter_by_size_range(
 
 
 def filter_by_past_duration(duration: str) -> Callable[[FileMetadata], bool]:
-    """Filter files modified within the past duration. e.g. '7D', '2H', '1D12H30M'"""
+    """Filter files by mtime within the past duration. e.g. '7D', '2H', '1D12H30M'"""
     delta = parse_duration(duration)
     cutoff = datetime.now() - delta
 
     def check(m: FileMetadata) -> bool:
-        return m.modified >= cutoff
+        return m.mtime >= cutoff
 
     return check
 

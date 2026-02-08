@@ -202,13 +202,13 @@ def write_metrics(df: pd.DataFrame, out_dir: Path, scan_duration: float,
             }
     metrics["by_directory"] = by_dir
 
-    # --- time_buckets (24h split into N-minute intervals by modified time) ---
+    # --- time_buckets (24h split into N-minute intervals by mtime) ---
     buckets_per_day = (24 * 60) // interval_minutes
     time_buckets: list[dict] = []
 
-    if "modified" in df.columns and len(df) > 0:
-        # Ensure modified is datetime
-        mod_col = pd.to_datetime(df["modified"], errors="coerce")
+    if "mtime" in df.columns and len(df) > 0:
+        # Ensure mtime is datetime
+        mod_col = pd.to_datetime(df["mtime"], errors="coerce")
 
         for i in range(buckets_per_day):
             start_min = i * interval_minutes
@@ -217,7 +217,7 @@ def write_metrics(df: pd.DataFrame, out_dir: Path, scan_duration: float,
             end_h, end_m = divmod(end_min, 60)
             label = f"{start_h:02d}:{start_m:02d}-{end_h:02d}:{end_m:02d}"
 
-            # Filter files whose modified time-of-day falls in this bucket
+            # Filter files whose mtime time-of-day falls in this bucket
             time_of_day = mod_col.dt.hour * 60 + mod_col.dt.minute
             mask = (time_of_day >= start_min) & (time_of_day < end_min)
             bucket_df = df[mask]

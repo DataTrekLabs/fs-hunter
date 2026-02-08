@@ -1,11 +1,15 @@
 from __future__ import annotations
 
+import os
 import time
 import typer
 from typing import Optional
 from pathlib import Path
 from datetime import datetime, timedelta
 from rich.console import Console
+from dotenv import load_dotenv
+
+load_dotenv()
 
 from scanner import scan_directories, process_file_list
 from utils import (
@@ -108,7 +112,7 @@ def scan(
     max_size: Optional[int] = typer.Option(None, "--max-size", help="Max file size in bytes"),
     unique: str = typer.Option("namepattern", "--unique", help="Deduplicate by 'hash' or 'namepattern'"),
     output_format: str = typer.Option("csv", "--output-format", help="Output format: 'csv' or 'jsonl'"),
-    output_folder: str = typer.Option("~", "-o", help="Output folder (default: ~)"),
+    output_folder: str = typer.Option(os.getenv("FS_HUNTER_OUTPUT_DIR", "~"), "-o", help="Output folder"),
     workers: int = typer.Option(4, "--workers", "-w", help="Parallel threads (default: 4)"),
     verbose: bool = typer.Option(False, "--verbose", "-v", help="Show scan progress details"),
     no_metrics: bool = typer.Option(False, "--no-metrics", help="Skip metrics.json generation"),
