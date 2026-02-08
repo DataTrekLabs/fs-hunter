@@ -598,39 +598,34 @@ All three subcommands share the same core scan pipeline:
 
 ```mermaid
 flowchart TD
-    INPUT["Input<br/>-d dirs | -f files | DELTA_CSV"] --> PARSE["_parse_input()<br/><i>auto-detect .txt vs comma-sep</i>"]
+    INPUT["Input<br/>-d dirs | -f files | DELTA_CSV"] --> PARSE["_parse_input()<br/>auto-detect .txt vs comma-sep"]
     PARSE --> TARGETS[Target paths]
-
     TARGETS --> FIND
 
-    subgraph scanner.py
-        FIND["Phase 1: find<br/>_build_find_cmd() + _run_find()<br/><i>pushes name, date, size to kernel</i>"]
-        FIND --> FILES["Matching file paths"]
-        FILES --> ENRICH["Phase 2: _enrich_batch()<br/><i>ThreadPoolExecutor across N workers</i>"]
-
-        subgraph Enrich Steps
-            direction TB
-            E1["path_pattern filter"]
-            E2["stat() + build FileMetadata"]
-            E3["time-of-day filter"]
-            E4["owner + MIME detection"]
-            E5["MD5 hash"]
-            E1 --> E2 --> E3 --> E4 --> E5
-        end
-
-        ENRICH --> |"per batch"| Enrich Steps
+    subgraph SCANNER["scanner.py"]
+        FIND["Phase 1: find<br/>_build_find_cmd + _run_find<br/>pushes name, date, size to kernel"]
+        FIND --> FILES[Matching file paths]
+        FILES --> ENRICH["Phase 2: _enrich_batch<br/>ThreadPoolExecutor across N workers"]
+        ENRICH --> E1[path_pattern filter]
+        E1 --> E2["stat + build FileMetadata"]
+        E2 --> E3[time-of-day filter]
+        E3 --> E4[owner + MIME detection]
+        E4 --> E5[MD5 hash]
     end
 
-    Enrich Steps --> UNIQ["unique_filter()<br/><i>dedup by namepattern or hash</i>"]
-    UNIQ --> YIELD["yield FileMetadata"]
-    YIELD --> DF["Build DataFrame"]
-    DF --> WRITE
+    E5 --> UNIQ["unique_filter<br/>dedup by namepattern or hash"]
+    UNIQ --> YIELD[yield FileMetadata]
+    YIELD --> DF[Build DataFrame]
 
-    subgraph Output Files
-        WRITE["results.csv / results.jsonl"]
-        SUM["_summary.csv"]
+    subgraph OUTPUT["Output Files"]
+        RES["results.csv / results.jsonl"]
+        SUMM["_summary.csv"]
         MET["metrics.json"]
     end
+
+    DF --> RES
+    DF --> SUMM
+    DF --> MET
 ```
 
 ### Filter Cascade (Three Tiers)
