@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project Overview
 
-fs-hunter is a Python CLI tool that scans directories, extracts extended file metadata (name, size, checksums, MIME type, owner, permissions, dates), applies filters, and outputs results as a table or CSV. Designed for Windows with a flat module structure (no packages).
+fs-hunter is a Python CLI tool that scans directories, extracts extended file metadata (name, size, checksums, MIME type, owner, permissions, dates), applies filters, and outputs results as a table or CSV. It also supports comparing two directories to find added/removed files. Flat module structure (no packages).
 
 ## Running
 
@@ -16,26 +16,30 @@ source venv/bin/activate   # Unix
 # Install dependencies
 pip install -r requirements.txt
 
-# Run the tool
-python main.py <dir1> [dir2 ...] [options]
-python main.py . --ext .py
-python main.py ./src --min-size 1KB --after 2024-01-01 --output results.csv
+# Scan command
+python main.py scan --base-path /data --lookback 7D -v
+python main.py scan --paths "/dir1,/dir2" --file-pattern glob "*.csv"
+
+# Compare command
+python main.py compare --source /data/baseline --target /data/current --lookback 7D -v
 ```
 
 ## Architecture
 
-Data flows as a pipeline: `main.py` orchestrates scanner -> metadata -> filters -> formatters.
+Two subcommands (`scan` and `compare`) sharing the same scan pipeline.
 
-- **main.py** — argparse CLI entry point, wires the pipeline together
-- **scanner.py** — Generator-based directory walking via pathlib; yields `(file_path, base_dir)` tuples lazily
-- **metadata.py** — `FileMetadata` dataclass (13 fields) + `extract_metadata()`. Uses ctypes/advapi32 for Windows file owner, single-pass MD5+SHA256 checksums
-- **filters.py** — `build_filter_chain()` returns a combined predicate `Callable[[FileMetadata], bool]` from CLI filter args
-- **formatters.py** — `print_table()` (tabulate grid) and `export_csv()` (csv.DictWriter). Consumes `FileMetadata.asdict()`
-- **utils.py** — Size parsing/formatting ("1KB" <-> 1024) and date parsing/formatting
+- **main.py** — typer CLI with `scan` + `compare` subcommands, wires the pipeline
+- **scanner.py** — `find`-based file discovery + parallel enrichment batches via ThreadPoolExecutor
+- **metadata.py** — `FileMetadata` dataclass (11 fields) + `extract_metadata_stat()` / `enrich_metadata()`
+- **filters.py** — `build_filter_chain()` returns a combined predicate `Callable[[FileMetadata], bool]`
+- **formatters.py** — `parse_date()`, `parse_time()`, `parse_duration()` smart parsers
+- **utils.py** — Delta CSV parsing, DataFrame I/O, output writing, metrics generation
+- **compare.py** — `compute_delta()`, `write_compare_summary()`, `write_delta_metrics()`
 
 ## Key Design Decisions
 
-- **Only external dependency is `tabulate`** — everything else is stdlib
-- **`FileMetadata` is a dataclass** so `asdict()` feeds CSV/future Google Sheets seamlessly
-- **Windows-specific**: file owner uses ctypes advapi32.dll directly (no subprocess)
+- **Dependencies**: `typer`, `rich`, `pandas`, `python-dotenv`
+- **`FileMetadata` is a dataclass** so `to_dict()` feeds CSV/JSONL seamlessly
+- **Two-phase metadata**: cheap stat-only first, expensive owner/MIME only for filter-passing files
 - **Generator pipeline**: scanner yields lazily, results collected only for display
+- **Compare reuses scan pipeline**: both source and target scanned with same `scan_directories()`, then diffed on `full_path`

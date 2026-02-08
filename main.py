@@ -7,6 +7,7 @@ from typing import Optional
 from pathlib import Path
 from datetime import datetime, timedelta
 from rich.console import Console
+import pandas as pd
 from dotenv import load_dotenv
 
 load_dotenv()
@@ -21,6 +22,7 @@ from utils import (
     enrich_with_delta,
     write_metrics,
 )
+from compare import compute_delta, write_compare_summary, write_delta_metrics
 from filters import (
     filter_by_time_range,
     filter_unique,
@@ -210,6 +212,139 @@ def scan(
 
     console.print(f"[green]Results:[/green]  {results_file}")
     console.print(f"[green]Summary:[/green]  {summary_file}")
+
+
+@app.command()
+def compare(
+    source: str = typer.Option(..., "--source", help="Source (baseline) directory path"),
+    target: str = typer.Option(..., "--target", help="Target (current) directory path"),
+    scan_start: str = typer.Option(None, "--scan-start", help="Date range start"),
+    scan_end: str = typer.Option(None, "--scan-end", help="Date range end"),
+    lookback: str = typer.Option("1H", "--lookback", help="Relative duration e.g. 7D, 2H, 1D12H30M"),
+    day_start: str = typer.Option("00:00:00", "--day-start", help="Time-of-day start"),
+    day_end: str = typer.Option("23:59:59", "--day-end", help="Time-of-day end"),
+    file_pattern: tuple[str, str] = typer.Option(("glob", "*.parq*"), "--file-pattern", help="Pattern on filename: glob|regex PATTERN"),
+    path_pattern: Optional[tuple[str, str]] = typer.Option(None, "--path-pattern", help="Pattern on relative path: glob|regex PATTERN"),
+    min_size: Optional[int] = typer.Option(None, "--min-size", help="Min file size in bytes"),
+    max_size: Optional[int] = typer.Option(None, "--max-size", help="Max file size in bytes"),
+    unique: str = typer.Option("namepattern", "--unique", help="Deduplicate by 'hash' or 'namepattern'"),
+    output_folder: str = typer.Option(os.getenv("FS_HUNTER_OUTPUT_DIR", "~"), "-o", help="Output folder"),
+    workers: int = typer.Option(4, "--workers", "-w", help="Parallel threads (default: 4)"),
+    verbose: bool = typer.Option(False, "--verbose", "-v", help="Show scan progress details"),
+    no_metrics: bool = typer.Option(False, "--no-metrics", help="Skip metrics.json generation"),
+    metrics_interval: int = typer.Option(30, "--metrics-interval", help="Time bucket size in minutes"),
+):
+    """Compare two directories: scan both with same filters, then diff results."""
+
+    use_date_range = scan_start is not None or scan_end is not None
+
+    if unique not in ("hash", "namepattern"):
+        console.print("[red]Error:[/red] --unique must be 'hash' or 'namepattern'.")
+        raise typer.Exit(1)
+
+    if use_date_range:
+        if scan_start is None:
+            scan_start = _yesterday_midnight()
+        if scan_end is None:
+            scan_end = _now()
+
+    fp_type, fp_value = file_pattern
+    if fp_type not in ("glob", "regex"):
+        console.print("[red]Error:[/red] --file-pattern type must be 'glob' or 'regex'.")
+        raise typer.Exit(1)
+
+    pp_type, pp_value = path_pattern if path_pattern else (fp_type, None)
+    time_filter = filter_by_time_range(day_start, day_end)
+    need_hash = unique == "hash"
+
+    def _run_scan(dir_path: str, label: str, ufilter) -> list:
+        console.print(f"\n[bold cyan]Scanning {label}:[/bold cyan] {dir_path}")
+        results = []
+        scanner = scan_directories(
+            targets=[dir_path],
+            name_pattern=fp_value,
+            pattern_type=fp_type,
+            lookback=lookback if not use_date_range else None,
+            scan_start=scan_start if use_date_range else None,
+            scan_end=scan_end if use_date_range else None,
+            min_size=min_size,
+            max_size=max_size,
+            time_filter=time_filter,
+            path_pattern=pp_value,
+            unique_filter=ufilter,
+            need_hash=need_hash,
+            workers=workers,
+            verbose=verbose,
+        )
+        for metadata in scanner:
+            if verbose:
+                console.print(f"  {metadata.relative_path}")
+            results.append(metadata)
+        console.print(f"[green]{len(results)} files found in {label}.[/green]")
+        return results
+
+    scan_start_time = time.time()
+
+    source_results = _run_scan(source, "source", filter_unique(base=unique))
+    target_results = _run_scan(target, "target", filter_unique(base=unique))
+
+    scan_duration = time.time() - scan_start_time
+
+    source_df = results_to_dataframe(source_results) if source_results else pd.DataFrame()
+    target_df = results_to_dataframe(target_results) if target_results else pd.DataFrame()
+
+    # Compute delta
+    if source_df.empty and target_df.empty:
+        console.print("[yellow]Both directories empty — nothing to compare.[/yellow]")
+        return
+
+    delta_df, added_count, removed_count = compute_delta(
+        source_df if not source_df.empty else pd.DataFrame(columns=["full_path"]),
+        target_df if not target_df.empty else pd.DataFrame(columns=["full_path"]),
+    )
+
+    console.print(f"\n[bold]Delta:[/bold] [green]+{added_count} added[/green], [red]-{removed_count} removed[/red]")
+
+    # Create output directory with compare/ subdirectory
+    out_dir = create_output_dir(output_folder)
+    compare_dir = out_dir / "compare"
+    compare_dir.mkdir(parents=True, exist_ok=True)
+
+    # Write source and target results
+    if not source_df.empty:
+        s_file = compare_dir / "s_result.csv"
+        source_df.to_csv(s_file, index=False)
+        console.print(f"[green]Source results:[/green]  {s_file}")
+
+    if not target_df.empty:
+        t_file = compare_dir / "t_result.csv"
+        target_df.to_csv(t_file, index=False)
+        console.print(f"[green]Target results:[/green]  {t_file}")
+
+    # Write comparison summary
+    summary_file = write_compare_summary(
+        source_df if not source_df.empty else pd.DataFrame(),
+        target_df if not target_df.empty else pd.DataFrame(),
+        delta_df, compare_dir, source, target,
+    )
+    console.print(f"[green]Summary:[/green]         {summary_file}")
+
+    # Write delta CSV if there are changes
+    if not delta_df.empty:
+        delta_file = compare_dir / "delta.csv"
+        delta_df.to_csv(delta_file, index=False)
+        console.print(f"[green]Delta:[/green]           {delta_file}")
+
+    # Write delta metrics
+    if not no_metrics:
+        dm_file = write_delta_metrics(delta_df, compare_dir)
+        console.print(f"[green]Delta metrics:[/green]   {dm_file}")
+
+        # Combined metrics on all scanned files
+        combined_df = pd.concat([source_df, target_df], ignore_index=True) if not source_df.empty or not target_df.empty else pd.DataFrame()
+        if not combined_df.empty:
+            metrics_file = write_metrics(combined_df, compare_dir, scan_duration, metrics_interval)
+            console.print(f"[green]Metrics:[/green]         {metrics_file}")
 
 
 if __name__ == "__main__":
