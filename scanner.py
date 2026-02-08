@@ -22,6 +22,7 @@ def _duration_to_minutes(duration_str: str) -> int:
 def _build_find_cmd(
     target: str,
     name_pattern: str | None = None,
+    pattern_type: str = "glob",
     lookback: str | None = None,
     scan_start: str | None = None,
     scan_end: str | None = None,
@@ -35,12 +36,14 @@ def _build_find_cmd(
     """
     cmd = ["find", target, "-type", "f"]
 
-    # Name filter (regex on full path)
+    # Name filter
     if name_pattern:
-        # find -regex matches the FULL path, so prefix with '.*/'
-        # to anchor the regex to the filename portion
-        full_regex = f".*/{name_pattern}"
-        cmd += ["-regextype", "posix-extended", "-regex", full_regex]
+        if pattern_type == "regex":
+            # find -regex matches the FULL path, so prefix with '.*/'
+            full_regex = f".*/{name_pattern}"
+            cmd += ["-regextype", "posix-extended", "-regex", full_regex]
+        else:
+            cmd += ["-name", name_pattern]
 
     # Date filter: lookback (relative) or range (absolute)
     if lookback:
@@ -66,6 +69,7 @@ def _run_find(
     target: str,
     base_dir: Path,
     name_pattern: str | None = None,
+    pattern_type: str = "glob",
     lookback: str | None = None,
     scan_start: str | None = None,
     scan_end: str | None = None,
@@ -73,7 +77,7 @@ def _run_find(
     max_size: int | None = None,
 ) -> list[tuple[Path, Path]]:
     """Run find on a single target and return list of (file_path, base_dir) tuples."""
-    cmd = _build_find_cmd(target, name_pattern, lookback, scan_start, scan_end, min_size, max_size)
+    cmd = _build_find_cmd(target, name_pattern, pattern_type, lookback, scan_start, scan_end, min_size, max_size)
     try:
         result = subprocess.run(
             cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, timeout=600,
@@ -95,6 +99,7 @@ def _run_find(
 def _enrich_batch(
     batch: list[tuple[Path, Path]],
     path_pattern: str | None,
+    pattern_type: str,
     time_filter: Callable[[FileMetadata], bool] | None,
     need_hash: bool,
 ) -> list[FileMetadata]:
@@ -103,16 +108,21 @@ def _enrich_batch(
     Applies remaining Python-side filters (path_pattern, time-of-day)
     then enriches with owner + MIME for matches.
     """
+    path_regex = re.compile(path_pattern) if path_pattern and pattern_type == "regex" else None
     results = []
     for file_path, base_dir in batch:
-        # Path pattern filter (relative path glob — can't push to find)
+        # Path pattern filter (relative path — can't push to find)
         if path_pattern:
             try:
                 rel = str(file_path.relative_to(base_dir)).replace("\\", "/")
             except ValueError:
                 rel = file_path.name
-            if not fnmatch.fnmatch(rel, path_pattern):
-                continue
+            if pattern_type == "regex":
+                if not path_regex.search(rel):
+                    continue
+            else:
+                if not fnmatch.fnmatch(rel, path_pattern):
+                    continue
 
         # Stat for metadata (find already filtered by date/size,
         # but we need the stat values for FileMetadata fields)
@@ -142,6 +152,7 @@ def _enrich_batch(
 def scan_directories(
     targets: list[str],
     name_pattern: str | None = None,
+    pattern_type: str = "glob",
     lookback: str | None = None,
     scan_start: str | None = None,
     scan_end: str | None = None,
@@ -178,8 +189,8 @@ def scan_directories(
                 for target in targets:
                     base_dir = Path(target).resolve()
                     found = _run_find(
-                        target, base_dir, name_pattern, lookback,
-                        scan_start, scan_end, min_size, max_size,
+                        target, base_dir, name_pattern, pattern_type,
+                        lookback, scan_start, scan_end, min_size, max_size,
                     )
                     all_found.extend(found)
                     progress.update(tid, description=f"[cyan]find[/cyan] [dim]{len(all_found)} candidates[/dim]")
@@ -188,8 +199,8 @@ def scan_directories(
                     futures = {
                         executor.submit(
                             _run_find, target, Path(target).resolve(),
-                            name_pattern, lookback, scan_start, scan_end,
-                            min_size, max_size,
+                            name_pattern, pattern_type, lookback,
+                            scan_start, scan_end, min_size, max_size,
                         ): target
                         for target in targets
                     }
@@ -201,8 +212,8 @@ def scan_directories(
             for target in targets:
                 base_dir = Path(target).resolve()
                 all_found.extend(_run_find(
-                    target, base_dir, name_pattern, lookback,
-                    scan_start, scan_end, min_size, max_size,
+                    target, base_dir, name_pattern, pattern_type,
+                    lookback, scan_start, scan_end, min_size, max_size,
                 ))
         else:
             with ThreadPoolExecutor(max_workers=min(workers, len(targets))) as executor:
@@ -247,7 +258,7 @@ def scan_directories(
             processed = 0
 
             if workers <= 1:
-                for metadata in _enrich_batch(all_found, path_pattern, time_filter, need_hash):
+                for metadata in _enrich_batch(all_found, path_pattern, pattern_type, time_filter, need_hash):
                     matched += 1
                     processed += 1
                     progress.update(tid, completed=processed,
@@ -262,7 +273,7 @@ def scan_directories(
                 with ThreadPoolExecutor(max_workers=workers) as executor:
                     futures = {
                         executor.submit(
-                            _enrich_batch, batch, path_pattern, time_filter, need_hash,
+                            _enrich_batch, batch, path_pattern, pattern_type, time_filter, need_hash,
                         ): len(batch)
                         for batch in batches
                     }
@@ -283,7 +294,7 @@ def scan_directories(
     else:
         # Non-verbose mode
         if workers <= 1:
-            for metadata in _enrich_batch(all_found, path_pattern, time_filter, need_hash):
+            for metadata in _enrich_batch(all_found, path_pattern, pattern_type, time_filter, need_hash):
                 if unique_filter and not unique_filter(metadata):
                     continue
                 yield metadata
@@ -291,7 +302,7 @@ def scan_directories(
             with ThreadPoolExecutor(max_workers=workers) as executor:
                 futures = [
                     executor.submit(
-                        _enrich_batch, batch, path_pattern, time_filter, need_hash,
+                        _enrich_batch, batch, path_pattern, pattern_type, time_filter, need_hash,
                     )
                     for batch in batches
                 ]

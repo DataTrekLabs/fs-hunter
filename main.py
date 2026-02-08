@@ -85,8 +85,8 @@ def scan(
     lookback: str = typer.Option("1H", "--lookback", help="Relative duration e.g. 7D, 2H, 1D12H30M (replaces --scan-start/--scan-end)"),
     day_start: str = typer.Option("00:00:00", "--day-start", help="Time-of-day start"),
     day_end: str = typer.Option("23:59:59", "--day-end", help="Time-of-day end"),
-    file_pattern: str = typer.Option(r".*\.parq(uet)?$", "--file-pattern", help="Regex on filename"),
-    path_pattern: Optional[str] = typer.Option(None, "--path-pattern", help="Glob on relative path"),
+    file_pattern: tuple[str, str] = typer.Option(("glob", "*.parq*"), "--file-pattern", help="Pattern on filename: glob|regex PATTERN"),
+    path_pattern: Optional[tuple[str, str]] = typer.Option(None, "--path-pattern", help="Pattern on relative path: glob|regex PATTERN"),
     min_size: Optional[int] = typer.Option(None, "--min-size", help="Min file size in bytes"),
     max_size: Optional[int] = typer.Option(None, "--max-size", help="Max file size in bytes"),
     unique: str = typer.Option("namepattern", "--unique", help="Deduplicate by 'hash' or 'namepattern'"),
@@ -117,6 +117,15 @@ def scan(
         if scan_end is None:
             scan_end = _now()
 
+    # Unpack file_pattern tuple (type, pattern)
+    fp_type, fp_value = file_pattern
+    if fp_type not in ("glob", "regex"):
+        console.print("[red]Error:[/red] --file-pattern type must be 'glob' or 'regex'.")
+        raise typer.Exit(1)
+
+    # Unpack path_pattern tuple if provided
+    pp_type, pp_value = path_pattern if path_pattern else (fp_type, None)
+
     time_filter = filter_by_time_range(day_start, day_end)
     uniq_filter = filter_unique(base=unique)
     need_hash = unique == "hash"
@@ -126,14 +135,15 @@ def scan(
     results = []
     for metadata in scan_directories(
         targets=targets,
-        name_pattern=file_pattern,
+        name_pattern=fp_value,
+        pattern_type=fp_type,
         lookback=lookback if not use_date_range else None,
         scan_start=scan_start if use_date_range else None,
         scan_end=scan_end if use_date_range else None,
         min_size=min_size,
         max_size=max_size,
         time_filter=time_filter,
-        path_pattern=path_pattern,
+        path_pattern=pp_value,
         unique_filter=uniq_filter,
         need_hash=need_hash,
         workers=workers,
