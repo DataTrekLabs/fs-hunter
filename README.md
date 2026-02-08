@@ -544,21 +544,200 @@ python main.py compare \
 
 ## Architecture
 
-```
-fs-hunter/
-  main.py         # CLI entry point — typer app with scan + delta + compare subcommands
-  scanner.py      # Multi-threaded recursive directory walking
-  metadata.py     # FileMetadata/DeltaInfo dataclasses + extraction
-  filters.py      # Filter functions (date, time, size, pattern, unique, lookback)
-  formatters.py   # Smart date/time/duration parsers
-  utils.py        # Delta CSV, DataFrame I/O, output writing, enrichment
-  compare.py      # Compare logic: compute_delta, write_compare_summary, write_delta_metrics
+### CLI Structure
+
+```mermaid
+graph LR
+    CLI[main.py] --> scan["scan<br/>-d/--dirs | -f/--files"]
+    CLI --> delta["delta<br/>DELTA_CSV positional"]
+    CLI --> compare["compare<br/>--source-prefix --target-prefix"]
+
+    scan --> SP[Scan Pipeline]
+    delta --> SP
+    compare --> SP1[Scan Pipeline x2]
+
+    SP --> OUT[Output]
+    SP1 --> DIFF[compute_delta]
+    delta --> ENRICH[enrich_with_delta]
+    ENRICH --> OUT
+    DIFF --> OUT
 ```
 
-**Data pipeline:**
-- **scan:** `main.py` orchestrates: scan directories -> extract metadata -> apply filters -> build DataFrame -> write output files.
-- **delta:** Same as scan, but directories come from a CSV manifest and results are enriched with dataset/table metadata.
-- **compare:** `main.py` scans source + target with same filters -> builds DataFrames -> `compute_delta()` diffs on `full_path` -> writes s_result, t_result, delta, summary, and metrics.
+### Module Map
+
+```mermaid
+graph TD
+    subgraph CLI
+        main["main.py<br/><i>typer CLI router</i>"]
+    end
+
+    subgraph Core
+        scanner["scanner.py<br/><i>find + parallel enrich</i>"]
+        metadata["metadata.py<br/><i>FileMetadata dataclass</i>"]
+        filters["filters.py<br/><i>filter predicates</i>"]
+        formatters["formatters.py<br/><i>date/time/duration parsers</i>"]
+    end
+
+    subgraph Output
+        utils["utils.py<br/><i>DataFrame I/O, metrics, CSV</i>"]
+        compare_mod["compare.py<br/><i>delta, summary, metrics</i>"]
+    end
+
+    main --> scanner
+    main --> utils
+    main --> compare_mod
+    scanner --> metadata
+    scanner --> filters
+    scanner --> formatters
+    main --> filters
+```
+
+### Scan Pipeline
+
+All three subcommands share the same core scan pipeline:
+
+```mermaid
+flowchart TD
+    INPUT["Input<br/>-d dirs | -f files | DELTA_CSV"] --> PARSE["_parse_input()<br/><i>auto-detect .txt vs comma-sep</i>"]
+    PARSE --> TARGETS[Target paths]
+
+    TARGETS --> FIND
+
+    subgraph scanner.py
+        FIND["Phase 1: find<br/>_build_find_cmd() + _run_find()<br/><i>pushes name, date, size to kernel</i>"]
+        FIND --> FILES["Matching file paths"]
+        FILES --> ENRICH["Phase 2: _enrich_batch()<br/><i>ThreadPoolExecutor across N workers</i>"]
+
+        subgraph Enrich Steps
+            direction TB
+            E1["path_pattern filter"]
+            E2["stat() + build FileMetadata"]
+            E3["time-of-day filter"]
+            E4["owner + MIME detection"]
+            E5["MD5 hash"]
+            E1 --> E2 --> E3 --> E4 --> E5
+        end
+
+        ENRICH --> |"per batch"| Enrich Steps
+    end
+
+    Enrich Steps --> UNIQ["unique_filter()<br/><i>dedup by namepattern or hash</i>"]
+    UNIQ --> YIELD["yield FileMetadata"]
+    YIELD --> DF["Build DataFrame"]
+    DF --> WRITE
+
+    subgraph Output Files
+        WRITE["results.csv / results.jsonl"]
+        SUM["_summary.csv"]
+        MET["metrics.json"]
+    end
+```
+
+### Filter Cascade (Three Tiers)
+
+```mermaid
+flowchart TD
+    FILE["File discovered by find"] --> T0
+
+    subgraph T0["Tier 0 — Free (no I/O)"]
+        T0A["name_regex check"]
+        T0B["path_pattern check"]
+        T0A --> T0B
+    end
+
+    T0 -->|pass| T1
+
+    subgraph T1["Tier 1 — Cheap (one stat call)"]
+        T1A["stat()"]
+        T1B["date/time filter"]
+        T1C["size filter"]
+        T1A --> T1B --> T1C
+    end
+
+    T1 -->|pass| T2
+
+    subgraph T2["Tier 2 — Expensive (file I/O)"]
+        T2A["owner lookup"]
+        T2B["MIME detection"]
+        T2C["MD5 hash"]
+        T2A --> T2B --> T2C
+    end
+
+    T2 -->|pass| UNIQ["unique_filter()<br/>dedup by namepattern or hash"]
+    UNIQ -->|pass| RESULT["yield FileMetadata"]
+
+    style T0 fill:#d4edda
+    style T1 fill:#fff3cd
+    style T2 fill:#f8d7da
+```
+
+### Compare Data Flow
+
+```mermaid
+flowchart TD
+    INPUT["--source-prefix + --target-prefix<br/>--subdirs or --files"] --> PARSE["_parse_input()"]
+    PARSE --> BUILD["Build full paths<br/>prefix/entry for each entry"]
+
+    BUILD --> S_PATHS["source_paths"]
+    BUILD --> T_PATHS["target_paths"]
+
+    S_PATHS --> S_SCAN["scan_directories()<br/><i>with fresh unique_filter</i>"]
+    T_PATHS --> T_SCAN["scan_directories()<br/><i>with fresh unique_filter</i>"]
+
+    S_SCAN --> S_DF["source_df"]
+    T_SCAN --> T_DF["target_df"]
+
+    S_DF --> DELTA["compute_delta()<br/><i>diff on full_path</i>"]
+    T_DF --> DELTA
+
+    DELTA --> ADDED["+added files"]
+    DELTA --> REMOVED["-removed files"]
+
+    subgraph "Output: fs_hunter/compare/YYYYMMDD_HHMMSS/"
+        S_CSV["s_result.csv"]
+        T_CSV["t_result.csv"]
+        D_CSV["delta.csv"]
+        SUMMARY["_summary.csv"]
+        D_MET["delta_metrics.json"]
+        MET["metrics.json"]
+    end
+
+    S_DF --> S_CSV
+    T_DF --> T_CSV
+    ADDED --> D_CSV
+    REMOVED --> D_CSV
+    DELTA --> SUMMARY
+    DELTA --> D_MET
+    S_DF --> MET
+    T_DF --> MET
+```
+
+### Output Directory Structure
+
+```mermaid
+graph LR
+    ROOT["fs_hunter/"] --> SCAN["scan/"]
+    ROOT --> DELTA["delta/"]
+    ROOT --> COMPARE["compare/"]
+
+    SCAN --> S_TS["YYYYMMDD_HHMMSS/"]
+    S_TS --> S1["results.csv"]
+    S_TS --> S2["_summary.csv"]
+    S_TS --> S3["metrics.json"]
+
+    DELTA --> D_TS["YYYYMMDD_HHMMSS/"]
+    D_TS --> D1["results.csv<br/><i>+ delta enrichment columns</i>"]
+    D_TS --> D2["_summary.csv"]
+    D_TS --> D3["metrics.json"]
+
+    COMPARE --> C_TS["YYYYMMDD_HHMMSS/"]
+    C_TS --> C1["s_result.csv"]
+    C_TS --> C2["t_result.csv"]
+    C_TS --> C3["delta.csv"]
+    C_TS --> C4["_summary.csv"]
+    C_TS --> C5["delta_metrics.json"]
+    C_TS --> C6["metrics.json"]
+```
 
 ## Examples
 
