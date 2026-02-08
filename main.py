@@ -7,7 +7,7 @@ from pathlib import Path
 from datetime import datetime, timedelta
 from rich.console import Console
 
-from scanner import scan_directories
+from scanner import scan_directories, process_file_list
 from utils import (
     parse_delta_csv,
     results_to_dataframe,
@@ -34,24 +34,24 @@ def _now() -> str:
     return datetime.now().strftime("%Y-%m-%d %H:%M:%S")
 
 
-def _resolve_targets(base_path, paths, path_list, delta_csv) -> tuple[list[str], list | None]:
-    """Resolve scan targets from one of four input modes.
+def _resolve_targets(base_path, paths, path_list, files, file_list, delta_csv) -> tuple[list[str], list | None, bool]:
+    """Resolve scan targets from one of six input modes.
 
-    Returns: (targets, delta_records or None)
+    Returns: (targets, delta_records or None, is_file_list)
     """
-    provided = sum(1 for x in [base_path, paths, path_list, delta_csv] if x)
+    provided = sum(1 for x in [base_path, paths, path_list, files, file_list, delta_csv] if x)
     if provided == 0:
-        console.print("[red]Error:[/red] Provide --base-path, --paths, --path-list, or --delta-csv.")
+        console.print("[red]Error:[/red] Provide --base-path, --paths, --path-list, --files, --file-list, or --delta-csv.")
         raise typer.Exit(1)
     if provided > 1:
         console.print("[red]Error:[/red] Input modes are mutually exclusive.")
         raise typer.Exit(1)
 
     if base_path:
-        return [base_path], None
+        return [base_path], None, False
 
     if paths:
-        return list(paths), None
+        return [p.strip() for p in paths.split(",") if p.strip()], None, False
 
     if path_list:
         p = Path(path_list)
@@ -63,7 +63,22 @@ def _resolve_targets(base_path, paths, path_list, delta_csv) -> tuple[list[str],
         if not targets:
             console.print(f"[red]Error:[/red] Path list file is empty: {path_list}")
             raise typer.Exit(1)
-        return targets, None
+        return targets, None, False
+
+    if files:
+        return [f.strip() for f in files.split(",") if f.strip()], None, True
+
+    if file_list:
+        p = Path(file_list)
+        if not p.is_file():
+            console.print(f"[red]Error:[/red] File list not found: {file_list}")
+            raise typer.Exit(1)
+        lines = p.read_text(encoding="utf-8").strip().splitlines()
+        file_paths = [line.strip() for line in lines if line.strip()]
+        if not file_paths:
+            console.print(f"[red]Error:[/red] File list is empty: {file_list}")
+            raise typer.Exit(1)
+        return file_paths, None, True
 
     # delta_csv
     try:
@@ -71,14 +86,16 @@ def _resolve_targets(base_path, paths, path_list, delta_csv) -> tuple[list[str],
     except (FileNotFoundError, ValueError) as e:
         console.print(f"[red]Error:[/red] {e}")
         raise typer.Exit(1)
-    return unique_paths, delta_records
+    return unique_paths, delta_records, False
 
 
 @app.command()
 def scan(
     base_path: Optional[str] = typer.Option(None, "--base-path", help="Single directory to scan"),
-    paths: Optional[list[str]] = typer.Option(None, "--paths", help="Multiple directories to scan"),
+    paths: Optional[str] = typer.Option(None, "--paths", help="Directories to scan (comma-separated)"),
     path_list: Optional[str] = typer.Option(None, "--path-list", help="Text file with paths (one per line)"),
+    files: Optional[str] = typer.Option(None, "--files", help="Specific file paths (comma-separated)"),
+    file_list: Optional[str] = typer.Option(None, "--file-list", help="Text file with specific file paths (one per line)"),
     delta_csv: Optional[str] = typer.Option(None, "--delta-csv", help="CSV file with Directory column (pandas)"),
     scan_start: str = typer.Option(None, "--scan-start", help="Date range start (default: yesterday 00:00:00)"),
     scan_end: str = typer.Option(None, "--scan-end", help="Date range end (default: now)"),
@@ -99,7 +116,7 @@ def scan(
 ):
     """Scan directories and extract file metadata with filters."""
 
-    targets, delta_records = _resolve_targets(base_path, paths, path_list, delta_csv)
+    targets, delta_records, is_file_list = _resolve_targets(base_path, paths, path_list, files, file_list, delta_csv)
 
     use_date_range = scan_start is not None or scan_end is not None
 
@@ -126,29 +143,42 @@ def scan(
     # Unpack path_pattern tuple if provided
     pp_type, pp_value = path_pattern if path_pattern else (fp_type, None)
 
-    time_filter = filter_by_time_range(day_start, day_end)
     uniq_filter = filter_unique(base=unique)
     need_hash = unique == "hash"
 
     # collect scan results
     scan_start_time = time.time()
     results = []
-    for metadata in scan_directories(
-        targets=targets,
-        name_pattern=fp_value,
-        pattern_type=fp_type,
-        lookback=lookback if not use_date_range else None,
-        scan_start=scan_start if use_date_range else None,
-        scan_end=scan_end if use_date_range else None,
-        min_size=min_size,
-        max_size=max_size,
-        time_filter=time_filter,
-        path_pattern=pp_value,
-        unique_filter=uniq_filter,
-        need_hash=need_hash,
-        workers=workers,
-        verbose=verbose,
-    ):
+
+    if is_file_list:
+        # Direct file processing — no find, just enrich the given files
+        scanner = process_file_list(
+            file_paths=targets,
+            unique_filter=uniq_filter,
+            need_hash=need_hash,
+            workers=workers,
+            verbose=verbose,
+        )
+    else:
+        time_filter = filter_by_time_range(day_start, day_end)
+        scanner = scan_directories(
+            targets=targets,
+            name_pattern=fp_value,
+            pattern_type=fp_type,
+            lookback=lookback if not use_date_range else None,
+            scan_start=scan_start if use_date_range else None,
+            scan_end=scan_end if use_date_range else None,
+            min_size=min_size,
+            max_size=max_size,
+            time_filter=time_filter,
+            path_pattern=pp_value,
+            unique_filter=uniq_filter,
+            need_hash=need_hash,
+            workers=workers,
+            verbose=verbose,
+        )
+
+    for metadata in scanner:
         console.print(f"{metadata.relative_path}")
         results.append(metadata)
 

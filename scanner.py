@@ -326,3 +326,115 @@ def scan_directories(
                         if unique_filter and not unique_filter(metadata):
                             continue
                         yield metadata
+
+
+def _enrich_file(file_path: Path, need_hash: bool) -> FileMetadata | None:
+    """Stat and enrich a single file. Returns None on error."""
+    try:
+        base_dir = file_path.parent
+        file_stat = file_path.stat()
+        metadata = extract_metadata_stat(file_path, base_dir, file_stat)
+        enrich_metadata(metadata, file_path)
+        if need_hash:
+            metadata.compute_sha256()
+        return metadata
+    except (PermissionError, OSError):
+        return None
+
+
+def _enrich_file_batch(
+    file_paths: list[Path], need_hash: bool
+) -> list[FileMetadata]:
+    """Process a batch of file paths directly (no find, no filtering)."""
+    results = []
+    for fp in file_paths:
+        metadata = _enrich_file(fp, need_hash)
+        if metadata:
+            results.append(metadata)
+    return results
+
+
+def process_file_list(
+    file_paths: list[str],
+    unique_filter: Callable[[FileMetadata], bool] | None = None,
+    need_hash: bool = False,
+    workers: int = 4,
+    verbose: bool = False,
+) -> Generator[FileMetadata, None, None]:
+    """Process a list of specific file paths directly.
+
+    Skips find entirely — just stat + enrich each file.
+    """
+    paths = [Path(f) for f in file_paths]
+
+    if workers <= 1:
+        batches = [paths]
+    else:
+        batch_size = max(1, len(paths) // workers)
+        batches = [
+            paths[i:i + batch_size]
+            for i in range(0, len(paths), batch_size)
+        ]
+
+    if verbose:
+        with Progress(
+            SpinnerColumn(),
+            TextColumn("[progress.description]{task.description}"),
+            BarColumn(),
+            TaskProgressColumn(),
+            TimeElapsedColumn(),
+            transient=False,
+        ) as progress:
+            if workers <= 1:
+                tid = progress.add_task(
+                    f"[cyan]Processing[/cyan] [dim]0/{len(paths)}[/dim]",
+                    total=len(paths),
+                )
+                processed = 0
+                for fp in paths:
+                    metadata = _enrich_file(fp, need_hash)
+                    processed += 1
+                    progress.update(tid, completed=processed)
+                    if metadata:
+                        if unique_filter and not unique_filter(metadata):
+                            continue
+                        yield metadata
+            else:
+                with ThreadPoolExecutor(max_workers=workers) as executor:
+                    futures = {}
+                    for i, batch in enumerate(batches):
+                        tid = progress.add_task(
+                            f"[cyan]Worker {i+1}[/cyan] [dim]0/{len(batch)}[/dim]",
+                            total=len(batch),
+                        )
+                        future = executor.submit(_enrich_file_batch, batch, need_hash)
+                        futures[future] = (i, len(batch), tid)
+
+                    for future in as_completed(futures):
+                        idx, batch_len, tid = futures[future]
+                        batch_results = future.result()
+                        progress.update(tid, completed=batch_len,
+                                        description=f"[green]Worker {idx+1}[/green] [dim]{batch_len} done — {len(batch_results)} files[/dim]")
+                        for metadata in batch_results:
+                            if unique_filter and not unique_filter(metadata):
+                                continue
+                            yield metadata
+    else:
+        if workers <= 1:
+            for fp in paths:
+                metadata = _enrich_file(fp, need_hash)
+                if metadata:
+                    if unique_filter and not unique_filter(metadata):
+                        continue
+                    yield metadata
+        else:
+            with ThreadPoolExecutor(max_workers=workers) as executor:
+                futures = [
+                    executor.submit(_enrich_file_batch, batch, need_hash)
+                    for batch in batches
+                ]
+                for future in as_completed(futures):
+                    for metadata in future.result():
+                        if unique_filter and not unique_filter(metadata):
+                            continue
+                        yield metadata
