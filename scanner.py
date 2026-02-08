@@ -180,21 +180,30 @@ def scan_directories(
         with Progress(
             SpinnerColumn(),
             TextColumn("[progress.description]{task.description}"),
+            BarColumn(),
+            TaskProgressColumn(),
             TimeElapsedColumn(),
             transient=True,
         ) as progress:
-            tid = progress.add_task("[cyan]Running find...[/cyan]", total=None)
-
             if workers <= 1 or len(targets) == 1:
                 for target in targets:
                     base_dir = Path(target).resolve()
+                    short = Path(target).name or target
+                    tid = progress.add_task(f"[cyan]find[/cyan] [dim]{short}[/dim]", total=None)
                     found = _run_find(
                         target, base_dir, name_pattern, pattern_type,
                         lookback, scan_start, scan_end, min_size, max_size,
                     )
                     all_found.extend(found)
-                    progress.update(tid, description=f"[cyan]find[/cyan] [dim]{len(all_found)} candidates[/dim]")
+                    progress.update(tid, description=f"[green]done[/green] [dim]{short} — {len(found)} files[/dim]")
             else:
+                # Create a progress task per target
+                target_tasks = {}
+                for target in targets:
+                    short = Path(target).name or target
+                    tid = progress.add_task(f"[cyan]find[/cyan] [dim]{short}[/dim]", total=None)
+                    target_tasks[target] = tid
+
                 with ThreadPoolExecutor(max_workers=min(workers, len(targets))) as executor:
                     futures = {
                         executor.submit(
@@ -205,8 +214,12 @@ def scan_directories(
                         for target in targets
                     }
                     for future in as_completed(futures):
-                        all_found.extend(future.result())
-                        progress.update(tid, description=f"[cyan]find[/cyan] [dim]{len(all_found)} candidates[/dim]")
+                        target = futures[future]
+                        found = future.result()
+                        all_found.extend(found)
+                        short = Path(target).name or target
+                        tid = target_tasks[target]
+                        progress.update(tid, description=f"[green]done[/green] [dim]{short} — {len(found)} files[/dim]")
     else:
         if workers <= 1 or len(targets) == 1:
             for target in targets:
@@ -220,8 +233,8 @@ def scan_directories(
                 futures = {
                     executor.submit(
                         _run_find, target, Path(target).resolve(),
-                        name_pattern, lookback, scan_start, scan_end,
-                        min_size, max_size,
+                        name_pattern, pattern_type, lookback,
+                        scan_start, scan_end, min_size, max_size,
                     ): target
                     for target in targets
                 }
@@ -250,47 +263,49 @@ def scan_directories(
             TimeElapsedColumn(),
             transient=False,
         ) as progress:
-            tid = progress.add_task(
-                f"[cyan]Enriching[/cyan] [dim]0/{len(all_found)} files[/dim]",
-                total=len(all_found),
-            )
-            matched = 0
-            processed = 0
+            total_matched = 0
 
             if workers <= 1:
+                tid = progress.add_task(
+                    f"[cyan]Worker 1[/cyan] [dim]0/{len(all_found)}[/dim]",
+                    total=len(all_found),
+                )
+                processed = 0
                 for metadata in _enrich_batch(all_found, path_pattern, pattern_type, time_filter, need_hash):
-                    matched += 1
+                    total_matched += 1
                     processed += 1
                     progress.update(tid, completed=processed,
-                                    description=f"[cyan]Enriching[/cyan] [dim]{processed}/{len(all_found)} — matched:{matched}[/dim]")
+                                    description=f"[cyan]Worker 1[/cyan] [dim]{processed}/{len(all_found)} — matched:{total_matched}[/dim]")
                     if unique_filter and not unique_filter(metadata):
                         continue
                     yield metadata
-                # update for files that didn't match
                 progress.update(tid, completed=len(all_found),
-                                description=f"[green]Done[/green] [dim]{len(all_found)} processed — {matched} matched[/dim]")
+                                description=f"[green]Worker 1[/green] [dim]{len(all_found)} done — {total_matched} matched[/dim]")
             else:
+                # Create a progress task per batch/worker
+                batch_tasks = {}
                 with ThreadPoolExecutor(max_workers=workers) as executor:
-                    futures = {
-                        executor.submit(
+                    futures = {}
+                    for i, batch in enumerate(batches):
+                        tid = progress.add_task(
+                            f"[cyan]Worker {i+1}[/cyan] [dim]0/{len(batch)}[/dim]",
+                            total=len(batch),
+                        )
+                        future = executor.submit(
                             _enrich_batch, batch, path_pattern, pattern_type, time_filter, need_hash,
-                        ): len(batch)
-                        for batch in batches
-                    }
+                        )
+                        futures[future] = (i, len(batch), tid)
+
                     for future in as_completed(futures):
+                        idx, batch_len, tid = futures[future]
                         batch_results = future.result()
-                        batch_len = futures[future]
-                        processed += batch_len
-                        matched += len(batch_results)
-                        progress.update(tid, completed=processed,
-                                        description=f"[cyan]Enriching[/cyan] [dim]{processed}/{len(all_found)} — matched:{matched}[/dim]")
+                        total_matched += len(batch_results)
+                        progress.update(tid, completed=batch_len,
+                                        description=f"[green]Worker {idx+1}[/green] [dim]{batch_len} done — {len(batch_results)} matched[/dim]")
                         for metadata in batch_results:
                             if unique_filter and not unique_filter(metadata):
                                 continue
                             yield metadata
-
-                progress.update(tid, completed=len(all_found),
-                                description=f"[green]Done[/green] [dim]{len(all_found)} processed — {matched} matched[/dim]")
     else:
         # Non-verbose mode
         if workers <= 1:
