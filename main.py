@@ -22,7 +22,7 @@ from utils import (
     enrich_with_delta,
     write_metrics,
 )
-from compare import compute_delta, write_compare_summary, write_delta_metrics
+from compare import compute_comparison, write_compare_summary, write_delta_metrics, write_metrics_jsonl
 from filters import (
     filter_by_time_range,
     filter_unique,
@@ -392,17 +392,24 @@ def compare(
     source_df = results_to_dataframe(source_results) if source_results else pd.DataFrame()
     target_df = results_to_dataframe(target_results) if target_results else pd.DataFrame()
 
-    # Compute delta
+    # Compute comparison
     if source_df.empty and target_df.empty:
         console.print("[yellow]Both directories empty — nothing to compare.[/yellow]")
         return
 
-    delta_df, added_count, removed_count = compute_delta(
-        source_df if not source_df.empty else pd.DataFrame(columns=["full_path"]),
-        target_df if not target_df.empty else pd.DataFrame(columns=["full_path"]),
+    comparison_df = compute_comparison(
+        source_df if not source_df.empty else pd.DataFrame(columns=["relative_path", "full_path", "mtime", "ctime", "size_bytes", "md5"]),
+        target_df if not target_df.empty else pd.DataFrame(columns=["relative_path", "full_path", "mtime", "ctime", "size_bytes", "md5"]),
     )
 
-    console.print(f"\n[bold]Delta:[/bold] [green]+{added_count} added[/green], [red]-{removed_count} removed[/red]")
+    status_counts = comparison_df["status"].value_counts()
+    matched = int(status_counts.get("match", 0))
+    differ = int(status_counts.get("differ", 0))
+    missing_src = int(status_counts.get("missing_in_source", 0))
+    missing_tgt = int(status_counts.get("missing_in_target", 0))
+
+    console.print(f"\n[bold]Comparison:[/bold] {len(comparison_df)} files")
+    console.print(f"  [green]matched: {matched}[/green]  [yellow]differ: {differ}[/yellow]  [red]missing_in_source: {missing_src}  missing_in_target: {missing_tgt}[/red]")
 
     # Create output directory
     out_dir = create_output_dir(output_folder, "compare")
@@ -418,30 +425,25 @@ def compare(
         target_df.to_csv(t_file, index=False)
         console.print(f"[green]Target results:[/green]  {t_file}")
 
+    # Write delta CSV (full comparison)
+    delta_file = out_dir / "delta.csv"
+    comparison_df.to_csv(delta_file, index=False)
+    console.print(f"[green]Delta:[/green]           {delta_file}")
+
     # Write comparison summary
     summary_file = write_compare_summary(
-        source_df if not source_df.empty else pd.DataFrame(),
-        target_df if not target_df.empty else pd.DataFrame(),
-        delta_df, out_dir, source_prefix, target_prefix,
+        comparison_df, out_dir, source_prefix, target_prefix,
+        len(source_df), len(target_df),
     )
     console.print(f"[green]Summary:[/green]         {summary_file}")
 
-    # Write delta CSV if there are changes
-    if not delta_df.empty:
-        delta_file = out_dir / "delta.csv"
-        delta_df.to_csv(delta_file, index=False)
-        console.print(f"[green]Delta:[/green]           {delta_file}")
-
-    # Write delta metrics
+    # Write delta metrics and metrics.jsonl
     if not no_metrics:
-        dm_file = write_delta_metrics(delta_df, out_dir)
+        dm_file = write_delta_metrics(comparison_df, out_dir)
         console.print(f"[green]Delta metrics:[/green]   {dm_file}")
 
-        # Combined metrics on all scanned files
-        combined_df = pd.concat([source_df, target_df], ignore_index=True) if not source_df.empty or not target_df.empty else pd.DataFrame()
-        if not combined_df.empty:
-            metrics_file = write_metrics(combined_df, out_dir, scan_duration, metrics_interval)
-            console.print(f"[green]Metrics:[/green]         {metrics_file}")
+        metrics_file = write_metrics_jsonl(comparison_df, out_dir, metrics_interval)
+        console.print(f"[green]Metrics:[/green]         {metrics_file}")
 
 
 if __name__ == "__main__":

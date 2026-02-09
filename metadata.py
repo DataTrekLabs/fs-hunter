@@ -46,7 +46,6 @@ class FileMetadata:
 
     def to_dict(self) -> dict:
         d = asdict(self)
-        d.pop("relative_path", None)
         d["ctime"] = self.ctime.strftime("%Y-%m-%d %H:%M:%S")
         d["mtime"] = self.mtime.strftime("%Y-%m-%d %H:%M:%S")
         return d
