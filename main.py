@@ -246,6 +246,19 @@ def delta(
 
     logger.info("delta parsed | targets={} records={}", len(targets), len(delta_records))
 
+    # Pre-flight: validate Google Sheet connection before scanning
+    _gsheet_id = os.getenv("FS_HUNTER_GSHEET_ID")
+    _gsheet_key = os.getenv("FS_HUNTER_GSHEET_KEY")
+    if _gsheet_id and _gsheet_key:
+        try:
+            from gsheet import check_connection
+            check_connection(_gsheet_id, _gsheet_key)
+            console.print("[green]Google Sheet:[/green] connection OK")
+        except Exception as e:
+            logger.error("delta gsheet pre-flight failed | error={}", e)
+            console.print(f"[red]Error:[/red] Google Sheet connection failed: {e}")
+            raise typer.Exit(1)
+
     use_date_range = scan_start is not None or scan_end is not None
 
     if unique not in ("hash", "namepattern"):
@@ -329,9 +342,7 @@ def delta(
     console.print(f"[green]Results:[/green]  {results_file}")
     console.print(f"[green]Summary:[/green]  {summary_file}")
 
-    # Push to Google Sheet if configured
-    _gsheet_id = os.getenv("FS_HUNTER_GSHEET_ID")
-    _gsheet_key = os.getenv("FS_HUNTER_GSHEET_KEY")
+    # Push to Google Sheet if configured (already validated at pre-flight)
     if _gsheet_id and _gsheet_key:
         try:
             from gsheet import append_to_sheet
