@@ -5,6 +5,7 @@ import math
 from pathlib import Path
 
 import pandas as pd
+from loguru import logger
 
 
 def format_time_delta(seconds: float) -> str:
@@ -57,6 +58,7 @@ def compute_comparison(
     })[["relative_path", "target_full_path", "target_mtime", "target_ctime", "target_size", "target_md5"]]
 
     merged = pd.merge(s, t, on="relative_path", how="outer")
+    logger.info("compute_comparison | source_rows={} target_rows={} merged_rows={}", len(s), len(t), len(merged))
 
     # Parse timestamps to datetime for delta computation
     for col in ("source_mtime", "target_mtime", "source_ctime", "target_ctime"):
@@ -83,6 +85,8 @@ def compute_comparison(
         return "match"
 
     merged["status"] = merged.apply(_status, axis=1)
+    _status_counts = merged["status"].value_counts()
+    logger.info("compute_comparison status | {}", _status_counts.to_dict())
 
     # Compute time deltas (target - source, in seconds)
     def _time_delta_seconds(row, src_col, tgt_col):
@@ -166,6 +170,7 @@ def write_compare_summary(
     }
     summary_file = out_dir / "_summary.csv"
     pd.DataFrame([summary]).to_csv(summary_file, index=False)
+    logger.info("write_compare_summary | path={}", summary_file)
     return summary_file
 
 
@@ -249,6 +254,7 @@ def write_delta_metrics(comparison_df: pd.DataFrame, out_dir: Path) -> Path:
     metrics_file = out_dir / "delta_metrics.json"
     with open(metrics_file, "w", encoding="utf-8") as f:
         json.dump(metrics, f, indent=2, default=str)
+    logger.info("write_delta_metrics | path={}", metrics_file)
     return metrics_file
 
 

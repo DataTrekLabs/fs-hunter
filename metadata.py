@@ -10,6 +10,7 @@ except ImportError:
 from dataclasses import dataclass, asdict
 from datetime import datetime
 from pathlib import Path
+from loguru import logger
 
 
 DELTA_REQUIRED_COLUMNS = ["Directory", "Dataset Repo", "SF Table", "Filename"]
@@ -58,7 +59,8 @@ def _compute_md5(file_path: Path) -> str:
         with open(file_path, "rb") as f:
             while chunk := f.read(8192):
                 md5.update(chunk)
-    except (PermissionError, OSError):
+    except (PermissionError, OSError) as e:
+        logger.debug("_compute_md5 error | file={} error={}", file_path, e)
         return ""
     return md5.hexdigest()
 
@@ -68,8 +70,8 @@ def _detect_mime(file_path: Path) -> str:
     if _magic_instance:
         try:
             return _magic_instance.from_file(str(file_path))
-        except (PermissionError, OSError):
-            pass
+        except (PermissionError, OSError) as e:
+            logger.debug("_detect_mime magic failed, falling back | file={} error={}", file_path, e)
     import mimetypes
     return mimetypes.guess_type(str(file_path))[0] or "unknown"
 
@@ -78,7 +80,8 @@ def _get_owner(file_path: Path) -> str:
     """Get file owner cross-platform."""
     try:
         return file_path.owner()
-    except (NotImplementedError, OSError):
+    except (NotImplementedError, OSError) as e:
+        logger.debug("_get_owner error | file={} error={}", file_path, e)
         return "N/A"
 
 

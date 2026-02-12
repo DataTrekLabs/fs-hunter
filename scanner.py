@@ -9,6 +9,7 @@ from pathlib import Path
 from typing import Callable, Generator
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from rich.progress import Progress, SpinnerColumn, TextColumn, BarColumn, TaskProgressColumn, TimeElapsedColumn
+from loguru import logger
 from metadata import FileMetadata, extract_metadata_stat, enrich_metadata
 from formatters import parse_duration
 
@@ -78,21 +79,25 @@ def _run_find(
 ) -> list[tuple[Path, Path]]:
     """Run find on a single target and return list of (file_path, base_dir) tuples."""
     cmd = _build_find_cmd(target, name_pattern, pattern_type, lookback, scan_start, scan_end, min_size, max_size)
+    logger.debug("_run_find | target={} cmd={}", target, " ".join(cmd))
     try:
         result = subprocess.run(
             cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, timeout=600,
         )
     except (subprocess.TimeoutExpired, FileNotFoundError, OSError) as e:
+        logger.warning("_run_find failed | target={} error={}", target, e)
         print(f"Warning: find failed for '{target}': {e}", file=sys.stderr)
         return []
 
     if not result.stdout:
+        logger.debug("_run_find | target={} files=0", target)
         return []
 
     paths = []
     for entry in result.stdout.split(b"\0"):
         if entry:
             paths.append((Path(os.fsdecode(entry)), base_dir))
+    logger.debug("_run_find | target={} files={}", target, len(paths))
     return paths
 
 
@@ -129,7 +134,8 @@ def _enrich_batch(
         try:
             file_stat = file_path.stat()
             metadata = extract_metadata_stat(file_path, base_dir, file_stat)
-        except (PermissionError, OSError):
+        except (PermissionError, OSError) as e:
+            logger.debug("_enrich_batch stat error | file={} error={}", file_path, e)
             continue
 
         # Time-of-day filter (can't push to find)
@@ -173,6 +179,8 @@ def scan_directories(
 
     verbose=True: Rich progress bar showing find + enrichment progress.
     """
+    logger.info("scan_directories start | targets={} workers={} pattern={} lookback={}",
+                len(targets), workers, name_pattern, lookback)
     # Phase 1: Run find to collect matching paths
     all_found: list[tuple[Path, Path]] = []
 
@@ -241,6 +249,8 @@ def scan_directories(
                 for future in as_completed(futures):
                     all_found.extend(future.result())
 
+    logger.info("scan_directories phase 1 complete | found={}", len(all_found))
+
     if not all_found:
         return
 
@@ -253,6 +263,8 @@ def scan_directories(
             all_found[i:i + batch_size]
             for i in range(0, len(all_found), batch_size)
         ]
+
+    logger.info("scan_directories phase 2 start | batches={} workers={}", len(batches), workers)
 
     if verbose:
         with Progress(
@@ -338,7 +350,8 @@ def _enrich_file(file_path: Path, need_hash: bool) -> FileMetadata | None:
         if need_hash:
             metadata.compute_hash()
         return metadata
-    except (PermissionError, OSError):
+    except (PermissionError, OSError) as e:
+        logger.debug("_enrich_file error | file={} error={}", file_path, e)
         return None
 
 
@@ -365,6 +378,7 @@ def process_file_list(
 
     Skips find entirely — just stat + enrich each file.
     """
+    logger.info("process_file_list start | files={} workers={}", len(file_paths), workers)
     paths = [Path(f) for f in file_paths]
 
     if workers <= 1:

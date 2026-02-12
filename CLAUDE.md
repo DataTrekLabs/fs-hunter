@@ -46,7 +46,7 @@ Three subcommands (`scan`, `delta`, `compare`) sharing the same scan pipeline.
 
 ## Key Design Decisions
 
-- **Dependencies**: `typer`, `rich`, `pandas`, `python-dotenv`
+- **Dependencies**: `typer`, `rich`, `pandas`, `python-dotenv`, `loguru`
 - **`FileMetadata` is a dataclass** so `to_dict()` feeds CSV/JSONL seamlessly
 - **Two-phase metadata**: cheap `extract_metadata_stat()` first, expensive `enrich_metadata()` (owner/MIME) only for filter-passing files
 - **Three-tier filter cascade**: Tier 0 (free string checks: name_regex, path_pattern) → Tier 1 (stat: date/time/size) → Tier 2 (expensive: owner + MIME enrichment)
@@ -96,6 +96,10 @@ Three subcommands (`scan`, `delta`, `compare`) sharing the same scan pipeline.
 | `FS_HUNTER_COMPARE_TARGET_PREFIX` | — | Default for `compare --target-prefix` |
 | `FS_HUNTER_COMPARE_SUBDIRS` | — | Default for `compare --subdirs` |
 | `FS_HUNTER_COMPARE_FILES` | — | Default for `compare --files` |
+| `FS_HUNTER_LOG_PATH` | — | Log file path (if set, logs written to file) |
+| `FS_HUNTER_LOG_LEVEL` | `INFO` | Minimum log level (`DEBUG`, `INFO`, `WARNING`, `ERROR`) |
+| `FS_HUNTER_GSHEET_ID` | — | Google Spreadsheet ID (delta results appended to sheet) |
+| `FS_HUNTER_GSHEET_KEY` | — | Path to Google service account JSON key file |
 
 ## Output Structure
 

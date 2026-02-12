@@ -3,3 +3,6 @@ rich
 pandas
 python-magic
 python-dotenv
+loguru
+gspread
+google-auth

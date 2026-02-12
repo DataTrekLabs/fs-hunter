@@ -5,18 +5,21 @@ import fnmatch
 from typing import Callable
 from metadata import FileMetadata
 from datetime import datetime
+from loguru import logger
 from formatters import parse_date, parse_time, parse_duration
 from utils import name_to_pattern
 
 
 def filter_by_name_pattern(pattern: str) -> Callable[[FileMetadata], bool]:
     """Filter files by regex pattern on filename."""
+    logger.debug("filter_by_name_pattern | pattern={}", pattern)
     regex = re.compile(pattern)
     return lambda m: regex.search(m.name) is not None
 
 
 def filter_by_path_pattern(pattern: str) -> Callable[[FileMetadata], bool]:
     """Filter files by glob pattern on relative path. e.g. 'derived/*.parq'"""
+    logger.debug("filter_by_path_pattern | pattern={}", pattern)
     # normalize to forward slashes so patterns work cross-platform
     return lambda m: fnmatch.fnmatch(m.relative_path.replace("\\", "/"), pattern)
 
@@ -25,6 +28,7 @@ def filter_by_date_range(
     after: str | None = None, before: str | None = None
 ) -> Callable[[FileMetadata], bool]:
     """Filter by mtime date range. Supports partial dates (YYYY, YYYY-MM, etc)."""
+    logger.debug("filter_by_date_range | after={} before={}", after, before)
     after_dt = parse_date(after) if after else None
     before_dt = parse_date(before) if before else None
 
@@ -42,6 +46,7 @@ def filter_by_time_range(
     start: str, end: str
 ) -> Callable[[FileMetadata], bool]:
     """Filter by time-of-day window. e.g. '09:00'-'17:00' matches any day."""
+    logger.debug("filter_by_time_range | start={} end={}", start, end)
     start_t = parse_time(start)
     end_t = parse_time(end)
 
@@ -59,6 +64,7 @@ def filter_by_size_range(
     min_size: int | None = None, max_size: int | None = None
 ) -> Callable[[FileMetadata], bool]:
     """Filter by file size range in bytes."""
+    logger.debug("filter_by_size_range | min={} max={}", min_size, max_size)
 
     def check(m: FileMetadata) -> bool:
         if min_size is not None and m.size_bytes < min_size:
@@ -72,6 +78,7 @@ def filter_by_size_range(
 
 def filter_by_past_duration(duration: str) -> Callable[[FileMetadata], bool]:
     """Filter files by mtime within the past duration. e.g. '7D', '2H', '1D12H30M'"""
+    logger.debug("filter_by_past_duration | duration={}", duration)
     delta = parse_duration(duration)
     cutoff = datetime.now() - delta
 
@@ -89,6 +96,7 @@ def filter_unique(base: str = "hash") -> Callable[[FileMetadata], bool]:
                          e.g. report_20250601.csv and report_20240115.csv
                          both match report_\\d{4}\\d{2}\\d{2}\\.csv
     """
+    logger.debug("filter_unique | base={}", base)
     seen: set[str] = set()
 
     def check(m: FileMetadata) -> bool:

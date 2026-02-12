@@ -12,6 +12,20 @@ from dotenv import load_dotenv
 
 load_dotenv()
 
+from loguru import logger
+
+# Configure loguru: remove default stderr handler (Rich handles console output)
+logger.remove()
+_log_path = os.getenv("FS_HUNTER_LOG_PATH")
+if _log_path:
+    _log_level = os.getenv("FS_HUNTER_LOG_LEVEL", "INFO").upper()
+    logger.add(
+        _log_path,
+        level=_log_level,
+        rotation="10 MB",
+        format="{time:YYYY-MM-DD HH:mm:ss} | {level:<8} | {name}:{function}:{line} | {message}",
+    )
+
 from scanner import scan_directories, process_file_list
 from utils import (
     parse_delta_csv,
@@ -21,6 +35,7 @@ from utils import (
     write_summary,
     enrich_with_delta,
     write_metrics,
+    StreamingCSVWriter,
 )
 from compare import compute_comparison, write_compare_summary, write_delta_metrics, write_metrics_jsonl
 from filters import (
@@ -78,9 +93,11 @@ def scan(
     """Scan directories or specific files and extract file metadata with filters."""
 
     if not dirs and not files:
+        logger.error("scan: no dirs or files provided")
         console.print("[red]Error:[/red] Provide -d/--dirs or -f/--files (or set FS_HUNTER_SCAN_DIRS / FS_HUNTER_SCAN_FILES).")
         raise typer.Exit(1)
     if dirs and files:
+        logger.error("scan: both dirs and files provided (mutually exclusive)")
         console.print("[red]Error:[/red] -d/--dirs and -f/--files are mutually exclusive. Check env vars if not using flags.")
         raise typer.Exit(1)
 
@@ -88,8 +105,13 @@ def scan(
     targets = _parse_input(files if is_file_list else dirs)
 
     if not targets:
+        logger.error("scan: no targets resolved from input")
         console.print("[red]Error:[/red] No targets resolved from input.")
         raise typer.Exit(1)
+
+    logger.info("scan start | mode={} targets={} lookback={} workers={} file_pattern={} hash={}",
+                "files" if is_file_list else "dirs", len(targets), lookback, workers, file_pattern, not off_hash)
+    logger.debug("scan targets: {}", targets)
 
     use_date_range = scan_start is not None or scan_end is not None
 
@@ -120,7 +142,10 @@ def scan(
     enable_hash = os.getenv("ENABLE_HASH", "true").lower() not in ("false", "0", "no")
     need_hash = (not off_hash) and enable_hash
 
-    # collect scan results
+    # create output dir and streaming writer before scan
+    out_dir = create_output_dir(output_folder, "scan")
+    writer = StreamingCSVWriter(out_dir, fmt=output_format)
+
     scan_start_time = time.time()
     results = []
 
@@ -154,25 +179,29 @@ def scan(
 
     for metadata in scanner:
         console.print(f"{metadata.relative_path}")
+        writer.write_row(metadata)
         results.append(metadata)
 
+    writer.close()
     scan_duration = time.time() - scan_start_time
+    logger.info("scan complete | files={} duration={:.2f}s", len(results), scan_duration)
     console.print(f"\n[green]{len(results)} files found.[/green]")
 
     if not results:
         return
 
-    # build DataFrame
+    # build DataFrame for summary/metrics
     df = results_to_dataframe(results)
 
-    # write output files
-    out_dir = create_output_dir(output_folder, "scan")
-    results_file = write_results(df, out_dir, fmt=output_format)
+    results_file = writer.path
     summary_file = write_summary(df, out_dir, targets, scan_start, scan_end)
 
     if not no_metrics:
         metrics_file = write_metrics(df, out_dir, scan_duration, metrics_interval)
         console.print(f"[green]Metrics:[/green]  {metrics_file}")
+        logger.info("scan output | results={} summary={} metrics={}", results_file, summary_file, metrics_file)
+    else:
+        logger.info("scan output | results={} summary={}", results_file, summary_file)
 
     console.print(f"[green]Results:[/green]  {results_file}")
     console.print(f"[green]Summary:[/green]  {summary_file}")
@@ -202,14 +231,20 @@ def delta(
     """Scan directories from a delta CSV manifest and enrich with delta metadata."""
 
     if not delta_csv:
+        logger.error("delta: no delta_csv provided")
         console.print("[red]Error:[/red] Provide DELTA_CSV argument (or set FS_HUNTER_DELTA_CSV).")
         raise typer.Exit(1)
+
+    logger.info("delta start | csv={}", delta_csv)
 
     try:
         targets, delta_records = parse_delta_csv(delta_csv)
     except (FileNotFoundError, ValueError) as e:
+        logger.error("delta: failed to parse delta CSV: {}", e)
         console.print(f"[red]Error:[/red] {e}")
         raise typer.Exit(1)
+
+    logger.info("delta parsed | targets={} records={}", len(targets), len(delta_records))
 
     use_date_range = scan_start is not None or scan_end is not None
 
@@ -239,6 +274,10 @@ def delta(
     need_hash = (not off_hash) and enable_hash
     time_filter = filter_by_time_range(day_start, day_end)
 
+    # create output dir and streaming writer before scan
+    out_dir = create_output_dir(output_folder, "delta")
+    writer = StreamingCSVWriter(out_dir, fmt=output_format)
+
     scan_start_time = time.time()
     results = []
 
@@ -261,9 +300,12 @@ def delta(
 
     for metadata in scanner:
         console.print(f"{metadata.relative_path}")
+        writer.write_row(metadata)
         results.append(metadata)
 
+    writer.close()
     scan_duration = time.time() - scan_start_time
+    logger.info("delta scan complete | files={} duration={:.2f}s", len(results), scan_duration)
     console.print(f"\n[green]{len(results)} files found.[/green]")
 
     if not results:
@@ -271,17 +313,37 @@ def delta(
 
     df = results_to_dataframe(results)
     df = enrich_with_delta(df, delta_records)
+    logger.info("delta enrichment complete | enriched_rows={}", len(df))
 
-    out_dir = create_output_dir(output_folder, "delta")
+    # overwrite results with enriched delta columns
     results_file = write_results(df, out_dir, fmt=output_format)
     summary_file = write_summary(df, out_dir, targets, scan_start, scan_end)
 
     if not no_metrics:
         metrics_file = write_metrics(df, out_dir, scan_duration, metrics_interval)
         console.print(f"[green]Metrics:[/green]  {metrics_file}")
+        logger.info("delta output | results={} summary={} metrics={}", results_file, summary_file, metrics_file)
+    else:
+        logger.info("delta output | results={} summary={}", results_file, summary_file)
 
     console.print(f"[green]Results:[/green]  {results_file}")
     console.print(f"[green]Summary:[/green]  {summary_file}")
+
+    # Push to Google Sheet if configured
+    _gsheet_id = os.getenv("FS_HUNTER_GSHEET_ID")
+    _gsheet_key = os.getenv("FS_HUNTER_GSHEET_KEY")
+    if _gsheet_id and _gsheet_key:
+        try:
+            from gsheet import append_to_sheet
+            rows_pushed = append_to_sheet(df, _gsheet_id, _gsheet_key)
+            logger.info("delta gsheet push | rows={} sheet={}", rows_pushed, _gsheet_id)
+            console.print(f"[green]Google Sheet:[/green] {rows_pushed} rows appended")
+        except Exception as e:
+            logger.warning("delta gsheet push failed | error={}", e)
+            console.print(f"[yellow]Warning:[/yellow] Google Sheet push failed: {e}")
+    else:
+        logger.debug("delta gsheet push skipped | gsheet_id={} gsheet_key={}",
+                     bool(_gsheet_id), bool(_gsheet_key))
 
 
 @app.command()
@@ -310,21 +372,26 @@ def compare(
     """Compare two directory trees: scan both with same filters, then diff results."""
 
     if not source_prefix:
+        logger.error("compare: no source_prefix provided")
         console.print("[red]Error:[/red] Provide --source-prefix (or set FS_HUNTER_COMPARE_SOURCE_PREFIX).")
         raise typer.Exit(1)
     if not target_prefix:
+        logger.error("compare: no target_prefix provided")
         console.print("[red]Error:[/red] Provide --target-prefix (or set FS_HUNTER_COMPARE_TARGET_PREFIX).")
         raise typer.Exit(1)
 
     if not subdirs and not files:
+        logger.error("compare: no subdirs or files provided")
         console.print("[red]Error:[/red] Provide --subdirs or --files (or set FS_HUNTER_COMPARE_SUBDIRS / FS_HUNTER_COMPARE_FILES).")
         raise typer.Exit(1)
     if subdirs and files:
+        logger.error("compare: both subdirs and files provided (mutually exclusive)")
         console.print("[red]Error:[/red] --subdirs and --files are mutually exclusive. Check env vars if not using flags.")
         raise typer.Exit(1)
 
     entries = _parse_input(subdirs if subdirs else files)
     if not entries:
+        logger.error("compare: no entries resolved from input")
         console.print("[red]Error:[/red] No entries resolved from input.")
         raise typer.Exit(1)
 
@@ -333,6 +400,9 @@ def compare(
     target_paths = [os.path.join(target_prefix, e) for e in entries]
 
     is_file_mode = files is not None
+
+    logger.info("compare start | source={} target={} entries={} mode={}",
+                source_prefix, target_prefix, len(entries), "files" if is_file_mode else "subdirs")
 
     use_date_range = scan_start is not None or scan_end is not None
 
@@ -396,7 +466,9 @@ def compare(
     scan_start_time = time.time()
 
     source_results = _run_scan(source_paths, "source", filter_unique(base=unique))
+    logger.info("compare source scan complete | files={}", len(source_results))
     target_results = _run_scan(target_paths, "target", filter_unique(base=unique))
+    logger.info("compare target scan complete | files={}", len(target_results))
 
     scan_duration = time.time() - scan_start_time
 
@@ -419,6 +491,8 @@ def compare(
     missing_src = int(status_counts.get("missing_in_source", 0))
     missing_tgt = int(status_counts.get("missing_in_target", 0))
 
+    logger.info("compare results | total={} match={} differ={} missing_source={} missing_target={}",
+                len(comparison_df), matched, differ, missing_src, missing_tgt)
     console.print(f"\n[bold]Comparison:[/bold] {len(comparison_df)} files")
     console.print(f"  [green]matched: {matched}[/green]  [yellow]differ: {differ}[/yellow]  [red]missing_in_source: {missing_src}  missing_in_target: {missing_tgt}[/red]")
 
@@ -455,6 +529,8 @@ def compare(
 
         metrics_file = write_metrics_jsonl(comparison_df, out_dir, metrics_interval)
         console.print(f"[green]Metrics:[/green]         {metrics_file}")
+
+    logger.info("compare output | dir={}", out_dir)
 
 
 if __name__ == "__main__":

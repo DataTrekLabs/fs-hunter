@@ -1,11 +1,53 @@
 from __future__ import annotations
 
+import csv
 import json
 import re
 from datetime import datetime
 from pathlib import Path
 import pandas as pd
+from loguru import logger
 from metadata import FileMetadata, DeltaInfo, DELTA_REQUIRED_COLUMNS
+
+# CSV column order matching FileMetadata.to_dict() keys
+_CSV_COLUMNS = [
+    "name", "extension", "full_path", "relative_path", "size_bytes",
+    "ctime", "mtime", "permissions", "owner", "mime_type", "md5",
+]
+
+
+class StreamingCSVWriter:
+    """Writes FileMetadata rows to CSV incrementally as they arrive."""
+
+    def __init__(self, out_dir: Path, fmt: str = "csv"):
+        self.fmt = fmt
+        self._row_count = 0
+        if fmt == "jsonl":
+            self.path = out_dir / "results.jsonl"
+            self._fh = open(self.path, "w", encoding="utf-8", newline="")
+            self._writer = None
+        else:
+            self.path = out_dir / "results.csv"
+            self._fh = open(self.path, "w", encoding="utf-8", newline="")
+            self._writer = csv.DictWriter(self._fh, fieldnames=_CSV_COLUMNS)
+            self._writer.writeheader()
+            self._fh.flush()
+        logger.info("StreamingCSVWriter opened | path={} fmt={}", self.path, fmt)
+
+    def write_row(self, metadata: FileMetadata) -> None:
+        row = metadata.to_dict()
+        if self.fmt == "jsonl":
+            self._fh.write(json.dumps(row, default=str) + "\n")
+        else:
+            self._writer.writerow(row)
+        self._fh.flush()
+        self._row_count += 1
+        if self._row_count % 100 == 0:
+            logger.debug("StreamingCSVWriter progress | rows={}", self._row_count)
+
+    def close(self) -> None:
+        self._fh.close()
+        logger.info("StreamingCSVWriter closed | path={} rows={}", self.path, self._row_count)
 
 
 def _is_valid_date(digits: str) -> bool:
@@ -49,6 +91,7 @@ def parse_delta_csv(csv_path: str) -> tuple[list[str], list[DeltaInfo]]:
             filename=str(row.get("Filename", "")),
         ))
 
+    logger.info("parse_delta_csv | path={} rows={} unique_dirs={}", csv_path, len(delta_records), len(unique_paths))
     return unique_paths, delta_records
 
 
@@ -63,6 +106,7 @@ def create_output_dir(output_folder: str = "~", subcommand: str = "scan") -> Pat
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
     out_dir = Path(output_folder).expanduser() / "fs_hunter" / subcommand / timestamp
     out_dir.mkdir(parents=True, exist_ok=True)
+    logger.info("create_output_dir | path={}", out_dir)
     return out_dir
 
 
@@ -74,6 +118,7 @@ def write_results(df: pd.DataFrame, out_dir: Path, fmt: str = "jsonl") -> Path:
     else:
         out_file = out_dir / "results.csv"
         df.to_csv(out_file, index=False)
+    logger.info("write_results | path={} rows={}", out_file, len(df))
     return out_file
 
 
@@ -91,6 +136,7 @@ def write_summary(df: pd.DataFrame, out_dir: Path, targets: list[str],
     }
     summary_file = out_dir / "_summary.csv"
     pd.DataFrame([summary]).to_csv(summary_file, index=False)
+    logger.info("write_summary | path={}", summary_file)
     return summary_file
 
 
@@ -249,4 +295,5 @@ def write_metrics(df: pd.DataFrame, out_dir: Path, scan_duration: float,
     metrics_file = out_dir / "metrics.json"
     with open(metrics_file, "w", encoding="utf-8") as f:
         json.dump(metrics, f, indent=2, default=str)
+    logger.info("write_metrics | path={}", metrics_file)
     return metrics_file
