@@ -36,13 +36,16 @@ def append_to_sheet(df: pd.DataFrame, sheet_id: str, key_path: str) -> int:
     Returns the number of rows appended.
     """
     ws = _get_worksheet(sheet_id, key_path)
+    header = df.columns.tolist()
 
-    # Check if sheet is empty → write header
+    # Write header if sheet is empty or first row doesn't match expected columns
     existing = ws.get_all_values()
-    if not existing:
-        header = df.columns.tolist()
-        ws.append_row(header, value_input_option="RAW")
-        logger.debug("gsheet header written | columns={}", len(header))
+    if not existing or existing[0] != header:
+        if not existing:
+            ws.append_row(header, value_input_option="RAW")
+        else:
+            ws.insert_row(header, index=1, value_input_option="RAW")
+        logger.debug("gsheet header written | columns={}", header)
 
     # Convert DataFrame rows to list of lists (all strings for Sheets)
     rows = df.astype(str).values.tolist()
