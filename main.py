@@ -55,8 +55,8 @@ def _parse_input(value: str) -> list[str]:
 
 @app.command()
 def scan(
-    dirs: Optional[str] = typer.Option(None, "--dirs", "-d", help="Directories (comma-separated or .txt file)"),
-    files: Optional[str] = typer.Option(None, "--files", "-f", help="Specific files (comma-separated or .txt file)"),
+    dirs: Optional[str] = typer.Option(os.getenv("FS_HUNTER_SCAN_DIRS") or None, "--dirs", "-d", help="Directories (comma-separated or .txt file)"),
+    files: Optional[str] = typer.Option(os.getenv("FS_HUNTER_SCAN_FILES") or None, "--files", "-f", help="Specific files (comma-separated or .txt file)"),
     scan_start: str = typer.Option(None, "--scan-start", help="Date range start (default: yesterday 00:00:00)"),
     scan_end: str = typer.Option(None, "--scan-end", help="Date range end (default: now)"),
     lookback: str = typer.Option("1H", "--lookback", help="Relative duration e.g. 7D, 2H, 1D12H30M (replaces --scan-start/--scan-end)"),
@@ -78,10 +78,10 @@ def scan(
     """Scan directories or specific files and extract file metadata with filters."""
 
     if not dirs and not files:
-        console.print("[red]Error:[/red] Provide -d/--dirs or -f/--files.")
+        console.print("[red]Error:[/red] Provide -d/--dirs or -f/--files (or set FS_HUNTER_SCAN_DIRS / FS_HUNTER_SCAN_FILES).")
         raise typer.Exit(1)
     if dirs and files:
-        console.print("[red]Error:[/red] -d/--dirs and -f/--files are mutually exclusive.")
+        console.print("[red]Error:[/red] -d/--dirs and -f/--files are mutually exclusive. Check env vars if not using flags.")
         raise typer.Exit(1)
 
     is_file_list = files is not None
@@ -180,7 +180,7 @@ def scan(
 
 @app.command()
 def delta(
-    delta_csv: str = typer.Argument(..., help="Path to delta CSV file with Directory column"),
+    delta_csv: Optional[str] = typer.Argument(os.getenv("FS_HUNTER_DELTA_CSV") or None, help="Path to delta CSV file with Directory column"),
     scan_start: str = typer.Option(None, "--scan-start", help="Date range start (default: yesterday 00:00:00)"),
     scan_end: str = typer.Option(None, "--scan-end", help="Date range end (default: now)"),
     lookback: str = typer.Option("1H", "--lookback", help="Relative duration e.g. 7D, 2H, 1D12H30M (replaces --scan-start/--scan-end)"),
@@ -200,6 +200,10 @@ def delta(
     metrics_interval: int = typer.Option(30, "--metrics-interval", help="Time bucket size in minutes"),
 ):
     """Scan directories from a delta CSV manifest and enrich with delta metadata."""
+
+    if not delta_csv:
+        console.print("[red]Error:[/red] Provide DELTA_CSV argument (or set FS_HUNTER_DELTA_CSV).")
+        raise typer.Exit(1)
 
     try:
         targets, delta_records = parse_delta_csv(delta_csv)
@@ -282,10 +286,10 @@ def delta(
 
 @app.command()
 def compare(
-    source_prefix: str = typer.Option(..., "--source-prefix", help="Source (baseline) base path"),
-    target_prefix: str = typer.Option(..., "--target-prefix", help="Target (current) base path"),
-    subdirs: Optional[str] = typer.Option(None, "--subdirs", help="Subdirectory names (comma-separated or .txt file)"),
-    files: Optional[str] = typer.Option(None, "--files", help="File paths relative to prefix (comma-separated or .txt file)"),
+    source_prefix: Optional[str] = typer.Option(os.getenv("FS_HUNTER_COMPARE_SOURCE_PREFIX") or None, "--source-prefix", help="Source (baseline) base path"),
+    target_prefix: Optional[str] = typer.Option(os.getenv("FS_HUNTER_COMPARE_TARGET_PREFIX") or None, "--target-prefix", help="Target (current) base path"),
+    subdirs: Optional[str] = typer.Option(os.getenv("FS_HUNTER_COMPARE_SUBDIRS") or None, "--subdirs", help="Subdirectory names (comma-separated or .txt file)"),
+    files: Optional[str] = typer.Option(os.getenv("FS_HUNTER_COMPARE_FILES") or None, "--files", help="File paths relative to prefix (comma-separated or .txt file)"),
     scan_start: str = typer.Option(None, "--scan-start", help="Date range start"),
     scan_end: str = typer.Option(None, "--scan-end", help="Date range end"),
     lookback: str = typer.Option("1H", "--lookback", help="Relative duration e.g. 7D, 2H, 1D12H30M"),
@@ -305,11 +309,18 @@ def compare(
 ):
     """Compare two directory trees: scan both with same filters, then diff results."""
 
+    if not source_prefix:
+        console.print("[red]Error:[/red] Provide --source-prefix (or set FS_HUNTER_COMPARE_SOURCE_PREFIX).")
+        raise typer.Exit(1)
+    if not target_prefix:
+        console.print("[red]Error:[/red] Provide --target-prefix (or set FS_HUNTER_COMPARE_TARGET_PREFIX).")
+        raise typer.Exit(1)
+
     if not subdirs and not files:
-        console.print("[red]Error:[/red] Provide --subdirs or --files.")
+        console.print("[red]Error:[/red] Provide --subdirs or --files (or set FS_HUNTER_COMPARE_SUBDIRS / FS_HUNTER_COMPARE_FILES).")
         raise typer.Exit(1)
     if subdirs and files:
-        console.print("[red]Error:[/red] --subdirs and --files are mutually exclusive.")
+        console.print("[red]Error:[/red] --subdirs and --files are mutually exclusive. Check env vars if not using flags.")
         raise typer.Exit(1)
 
     entries = _parse_input(subdirs if subdirs else files)

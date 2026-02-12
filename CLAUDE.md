@@ -89,6 +89,13 @@ Three subcommands (`scan`, `delta`, `compare`) sharing the same scan pipeline.
 |---|---|---|
 | `FS_HUNTER_OUTPUT_DIR` | `~` | Output folder |
 | `ENABLE_HASH` | `true` | Compute MD5 hash for each file |
+| `FS_HUNTER_SCAN_DIRS` | — | Default for `scan -d` (dirs or .txt path) |
+| `FS_HUNTER_SCAN_FILES` | — | Default for `scan -f` (files or .txt path) |
+| `FS_HUNTER_DELTA_CSV` | — | Default for `delta` positional arg |
+| `FS_HUNTER_COMPARE_SOURCE_PREFIX` | — | Default for `compare --source-prefix` |
+| `FS_HUNTER_COMPARE_TARGET_PREFIX` | — | Default for `compare --target-prefix` |
+| `FS_HUNTER_COMPARE_SUBDIRS` | — | Default for `compare --subdirs` |
+| `FS_HUNTER_COMPARE_FILES` | — | Default for `compare --files` |
 
 ## Output Structure
 
