@@ -55,6 +55,16 @@ def _now() -> str:
     return datetime.now().strftime("%Y-%m-%d %H:%M:%S")
 
 
+def _make_time_filter(day_start: str, day_end: str):
+    """Build the time-of-day filter, rejecting bad values with a clean error."""
+    try:
+        return filter_by_time_range(day_start, day_end)
+    except ValueError as e:
+        logger.error("invalid --day-start/--day-end: {}", e)
+        console.print(f"[red]Error:[/red] {e}")
+        raise typer.Exit(1)
+
+
 def _parse_input(value: str) -> list[str]:
     """Auto-detect input: if value ends with .txt and the file exists, read lines;
     otherwise split on comma."""
@@ -159,7 +169,7 @@ def scan(
             verbose=verbose,
         )
     else:
-        time_filter = filter_by_time_range(day_start, day_end)
+        time_filter = _make_time_filter(day_start, day_end)
         scanner = scan_directories(
             targets=targets,
             name_pattern=fp_value,
@@ -285,7 +295,7 @@ def delta(
     uniq_filter = filter_unique(base=unique)
     enable_hash = os.getenv("ENABLE_HASH", "true").lower() not in ("false", "0", "no")
     need_hash = (not off_hash) and enable_hash
-    time_filter = filter_by_time_range(day_start, day_end)
+    time_filter = _make_time_filter(day_start, day_end)
 
     # create output dir and streaming writer before scan
     out_dir = create_output_dir(output_folder, "delta")
@@ -433,7 +443,7 @@ def compare(
         raise typer.Exit(1)
 
     pp_type, pp_value = path_pattern if path_pattern else (fp_type, None)
-    time_filter = filter_by_time_range(day_start, day_end)
+    time_filter = _make_time_filter(day_start, day_end)
     enable_hash = os.getenv("ENABLE_HASH", "true").lower() not in ("false", "0", "no")
     need_hash = (not off_hash) and enable_hash
 
